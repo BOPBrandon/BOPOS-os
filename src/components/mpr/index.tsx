@@ -1,49 +1,244 @@
-import { GitBranch } from "lucide-react"
+import { useState } from "react"
+import { Plus, Settings2 } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { useMPR, type MPRLane, type MPRProcess, type LaneColorKey } from "@/context/MPRContext"
+import { MPRSetupWizard } from "./MPRSetupWizard"
+import { ProcessModal } from "./ProcessModal"
 
-const CORE_SYSTEMS = [
-  { id: 1, label: "Core System 1", description: "Define and document your primary business system." },
-  { id: 2, label: "Core System 2", description: "Track execution against your core process." },
-  { id: 3, label: "Core System 3", description: "Manage delivery and output quality." },
-  { id: 4, label: "Core System 4", description: "Measure results and iterate on the roadmap." },
-]
+// ─────────────────────────────────────────────
+// KANBAN COLOR MAP
+// Full class strings — no dynamic assembly.
+// ─────────────────────────────────────────────
+const KANBAN: Record<LaneColorKey, {
+  header: string       // column header background
+  cardBorder: string   // left border on each process card
+  addBtn: string       // "+ Upload Process" button accent
+  count: string        // process count pill
+}> = {
+  orange:  { header: "bg-orange-500",  cardBorder: "border-l-orange-400",  addBtn: "hover:border-orange-300 hover:text-orange-600",  count: "bg-orange-100 text-orange-700"  },
+  blue:    { header: "bg-blue-600",    cardBorder: "border-l-blue-400",    addBtn: "hover:border-blue-300 hover:text-blue-600",       count: "bg-blue-100 text-blue-700"      },
+  emerald: { header: "bg-emerald-600", cardBorder: "border-l-emerald-500", addBtn: "hover:border-emerald-300 hover:text-emerald-700", count: "bg-emerald-100 text-emerald-700" },
+  violet:  { header: "bg-violet-600",  cardBorder: "border-l-violet-500",  addBtn: "hover:border-violet-300 hover:text-violet-600",   count: "bg-violet-100 text-violet-700"  },
+  rose:    { header: "bg-rose-500",    cardBorder: "border-l-rose-400",    addBtn: "hover:border-rose-300 hover:text-rose-600",       count: "bg-rose-100 text-rose-700"      },
+  amber:   { header: "bg-amber-500",   cardBorder: "border-l-amber-400",   addBtn: "hover:border-amber-300 hover:text-amber-600",     count: "bg-amber-100 text-amber-700"    },
+  slate:   { header: "bg-slate-600",   cardBorder: "border-l-slate-400",   addBtn: "hover:border-slate-300 hover:text-slate-600",     count: "bg-slate-100 text-slate-700"    },
+}
 
-/**
- * Layer 2 — Master Process Roadmap (MPR)
- * The operational engine. Tracks the 4 Core Systems driving execution.
- */
-export function MPRDashboard() {
+// ─────────────────────────────────────────────
+// PROCESS CARD — sticky-note style, title only
+// ─────────────────────────────────────────────
+function ProcessCard({
+  process,
+  colorKey,
+  onClick,
+}: {
+  process: MPRProcess
+  colorKey: LaneColorKey
+  onClick: () => void
+}) {
+  const k = KANBAN[colorKey]
+
   return (
-    <div className="flex flex-col gap-6 p-8">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Master Process Roadmap</h1>
-        <p className="text-muted-foreground mt-1">4 Core Systems — The operational engine</p>
-      </div>
-
-      <div className="flex flex-col gap-3">
-        {CORE_SYSTEMS.map((system) => (
-          <div
-            key={system.id}
-            className="flex items-start gap-4 rounded-lg border border-border bg-card p-5 shadow-sm"
-          >
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
-              <GitBranch className="h-4 w-4 text-muted-foreground" />
-            </div>
-            <div>
-              <p className="font-semibold text-sm">{system.label}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{system.description}</p>
-            </div>
-            <div className="ml-auto flex items-center">
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                Not started
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <p className="text-xs text-muted-foreground">
-        Layer 2 of 3 — Populate with your Master Process Roadmap data.
+    <button
+      onClick={onClick}
+      className={cn(
+        "group w-full rounded-lg bg-white text-left",
+        "border border-border/50 border-l-4 shadow-sm",
+        k.cardBorder,
+        "px-3.5 py-3",
+        "hover:shadow-md hover:-translate-y-px transition-all duration-150"
+      )}
+    >
+      <p className="text-sm font-medium text-foreground leading-snug">
+        {process.title}
       </p>
+    </button>
+  )
+}
+
+// ─────────────────────────────────────────────
+// ADD PROCESS INPUT
+// Shows a ghost button; expands to an inline input on click.
+// ─────────────────────────────────────────────
+function AddProcessInput({
+  colorKey,
+  onAdd,
+}: {
+  colorKey: LaneColorKey
+  onAdd: (title: string) => void
+}) {
+  const [active, setActive] = useState(false)
+  const [value,  setValue]  = useState("")
+  const k = KANBAN[colorKey]
+
+  function commit() {
+    const trimmed = value.trim()
+    if (trimmed) onAdd(trimmed)
+    setValue("")
+    setActive(false)
+  }
+
+  if (!active) {
+    return (
+      <button
+        onClick={() => setActive(true)}
+        className={cn(
+          "mt-1 flex w-full items-center gap-2 rounded-lg border border-dashed border-border/60",
+          "px-3.5 py-2.5 text-sm text-muted-foreground transition-colors",
+          k.addBtn
+        )}
+      >
+        <Plus className="h-3.5 w-3.5 shrink-0" />
+        Upload Process
+      </button>
+    )
+  }
+
+  return (
+    <input
+      autoFocus
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter")  commit()
+        if (e.key === "Escape") { setValue(""); setActive(false) }
+      }}
+      onBlur={commit}
+      placeholder="Process title… (Enter to save)"
+      className="mt-1 w-full rounded-lg border border-border bg-white px-3.5 py-2.5 text-sm text-foreground shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+    />
+  )
+}
+
+// ─────────────────────────────────────────────
+// KANBAN COLUMN
+// ─────────────────────────────────────────────
+function KanbanColumn({
+  lane,
+  processes,
+  onAdd,
+  onOpen,
+}: {
+  lane: MPRLane
+  processes: MPRProcess[]
+  onAdd: (laneId: string, title: string) => void
+  onOpen: (process: MPRProcess) => void
+}) {
+  const k = KANBAN[lane.colorKey]
+
+  return (
+    <div className="flex w-72 shrink-0 flex-col rounded-xl border border-border/60 shadow-md overflow-hidden">
+
+      {/* ── Column header ───────────────────────── */}
+      <div className={cn("px-5 py-4", k.header)}>
+        <h2 className="text-base font-bold tracking-tight text-white leading-tight">
+          {lane.label}
+        </h2>
+        <div className="mt-1 flex items-center gap-2">
+          <span className={cn(
+            "rounded-full px-2 py-0.5 text-[11px] font-semibold",
+            k.count
+          )}>
+            {processes.length} {processes.length === 1 ? "process" : "processes"}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Process cards ───────────────────────── */}
+      <div className="flex flex-1 flex-col gap-2 overflow-y-auto bg-slate-50 p-3">
+        {processes.map((p) => (
+          <ProcessCard
+            key={p.id}
+            process={p}
+            colorKey={lane.colorKey}
+            onClick={() => onOpen(p)}
+          />
+        ))}
+
+        <AddProcessInput
+          colorKey={lane.colorKey}
+          onAdd={(title) => onAdd(lane.id, title)}
+        />
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+// MAIN DASHBOARD
+// ─────────────────────────────────────────────
+export function MPRDashboard() {
+  const { state, completeSetup, addProcess, processesForLane, resetSetup } = useMPR()
+  const [activeProcess, setActiveProcess] = useState<MPRProcess | null>(null)
+  const [modalOpen,     setModalOpen]     = useState(false)
+
+  function handleOpen(process: MPRProcess) {
+    setActiveProcess(process)
+    setModalOpen(true)
+  }
+
+  function handleAdd(laneId: string, title: string) {
+    const p = addProcess(laneId, title)
+    setActiveProcess(p)
+    setModalOpen(true)
+  }
+
+  // ── First-time setup ─────────────────────────────────────────
+  if (!state.setupComplete) {
+    return <MPRSetupWizard onComplete={completeSetup} />
+  }
+
+  const totalProcesses = state.processes.length
+  const documented     = state.processes.filter((p) => p.writtenDoc.trim() || p.videoUrl.trim()).length
+
+  // ── Kanban board ─────────────────────────────────────────────
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+
+      {/* ── Page header ────────────────────────────────────────── */}
+      <header className="flex shrink-0 items-center justify-between border-b border-border bg-background px-6 py-4">
+        <div>
+          <h1 className="text-lg font-bold leading-tight tracking-tight">
+            Master Process Roadmap
+          </h1>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {state.lanes.length} lanes · {totalProcesses} processes · {documented} documented
+          </p>
+        </div>
+
+        <button
+          onClick={resetSetup}
+          className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted transition-colors"
+        >
+          <Settings2 className="h-3.5 w-3.5" />
+          Edit Lanes
+        </button>
+      </header>
+
+      {/* ── Kanban board ───────────────────────────────────────── */}
+      <div className="flex-1 overflow-x-auto overflow-y-hidden bg-[#F0F2F5]">
+        <div className="flex h-full gap-5 px-6 py-5">
+          {state.lanes.map((lane) => (
+            <KanbanColumn
+              key={lane.id}
+              lane={lane}
+              processes={processesForLane(lane.id)}
+              onAdd={handleAdd}
+              onOpen={handleOpen}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* ── Process detail modal ───────────────────────────────── */}
+      <ProcessModal
+        process={activeProcess}
+        open={modalOpen}
+        onOpenChange={(o) => {
+          setModalOpen(o)
+          if (!o) setActiveProcess(null)
+        }}
+      />
     </div>
   )
 }

@@ -1,18 +1,27 @@
 import { NavLink } from "react-router-dom"
-import { LayoutDashboard, Map, Anchor, ChevronRight } from "lucide-react"
+import { LayoutDashboard, Map, Anchor, ChevronRight, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Separator } from "@/components/ui/separator"
 import { APP_NAME, APP_FULL_NAME, PRIMARY_DASHBOARDS } from "@/bopos-config"
 
+const TOKEN_KEY = "bopos_token"
+
 const NAV_ICONS = {
-  os: LayoutDashboard,
-  mpr: Map,
+  os:     LayoutDashboard,
+  mpr:    Map,
   anchor: Anchor,
 } as const
+
+function handleSignOut() {
+  localStorage.removeItem(TOKEN_KEY)
+  // Full reload so App re-evaluates the token gate
+  window.location.href = "/"
+}
 
 export function Sidebar() {
   return (
     <aside className="flex h-screen w-64 flex-col bg-bop-dark-blue">
+
       {/* Brand */}
       <div className="flex flex-col gap-1 px-6 py-5">
         <span className="text-xs font-semibold uppercase tracking-widest text-bop-white/50">
@@ -51,14 +60,6 @@ export function Sidebar() {
                   <Icon className="h-4 w-4 shrink-0" />
                   <span className="flex-1 leading-tight">
                     <span className="block">{dashboard.shortLabel}</span>
-                    <span
-                      className={cn(
-                        "block text-xs font-normal",
-                        isActive ? "text-white/70" : "text-bop-white/40"
-                      )}
-                    >
-                      {dashboard.description}
-                    </span>
                   </span>
                   <ChevronRight
                     className={cn(
@@ -76,7 +77,7 @@ export function Sidebar() {
       <Separator className="bg-bop-white/10" />
 
       {/* Layer indicator */}
-      <div className="mt-auto px-6 py-4">
+      <div className="px-6 py-4">
         <p className="text-xs text-bop-white/40">
           Three-Layer Architecture
         </p>
@@ -91,6 +92,23 @@ export function Sidebar() {
           ))}
         </div>
       </div>
+
+      {/* Sign Out — pinned to bottom */}
+      <div className="mt-auto px-3 pb-4">
+        <Separator className="mb-4 bg-bop-white/10" />
+        <button
+          onClick={handleSignOut}
+          className={cn(
+            "group flex w-full items-center gap-3 rounded-md px-3 py-2.5",
+            "text-sm font-medium text-bop-white/50",
+            "hover:bg-red-500/20 hover:text-red-300 transition-colors"
+          )}
+        >
+          <LogOut className="h-4 w-4 shrink-0" />
+          <span>Sign Out</span>
+        </button>
+      </div>
+
     </aside>
   )
 }
