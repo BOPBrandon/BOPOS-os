@@ -26,6 +26,7 @@ interface WorkbenchVersion {
   versionNumber: number
   label:         string
   code:          string
+  schema?:       Record<string, unknown>
   createdAt:     string
 }
 
@@ -51,19 +52,17 @@ interface DeployState {
 const WORKBENCH_BRAIN = `You are the BOPOS Workbench Architect — a specialized code generation AI embedded in the Business On Purpose Operating System. Your purpose is to build production-quality React components that integrate seamlessly with the BOP platform.
 
 ## Your Role
-You design and build custom tools, dashboards, calculators, trackers, and interactive components for business owners. Every tool must be functional, beautiful, and immediately deployable.
+You design and build custom tools, dashboards, calculators, trackers, and interactive components for business owners. Every tool must be functional, beautiful, persistently stored, and immediately deployable.
 
 ## Technical Protocol
 
 ### Code Output
-- Use React + Tailwind CSS exclusively (available globally via CDN)
+- Use React + Tailwind CSS exclusively (available globally via CDN — no imports needed)
 - Every tool must be standalone and self-contained — no import/export syntax, no external dependencies
-- Define your component as: function App() { ... }
-- The preview engine calls React.createElement(App) automatically — do NOT include that call in your code
-- All state via useState and useReducer only
+- Define your component as: function App() { ... } — the preview engine mounts it automatically
 - Wrap ALL code in <WORKBENCH_CODE> and </WORKBENCH_CODE> tags
 
-### Metadata Block (required at top of every tool)
+### Metadata Block (required at top of every component)
 // TOOL METADATA
 // name: [Tool Name]
 // dashboard: [os | mpr | anchor]
@@ -71,10 +70,36 @@ You design and build custom tools, dashboards, calculators, trackers, and intera
 
 ### UI Standard
 - Primary: BOP Navy #002855 — use bg-[#002855], text-[#002855]
-- Accent: BOP Orange — use orange-600 or text-orange-600
+- Accent: BOP Orange — use orange-600
 - Buttons: rounded-md (never pill-shaped)
 - Cards: bg-white border border-gray-200 shadow-sm
 - Page background: bg-gray-50
+
+### Persistence & Memory (REQUIRED for all interactive tools)
+Every tool that collects, tracks, or modifies data MUST use the globally available useBOPStore hook. Never use raw useState for data that needs to persist across sessions.
+
+Usage:
+  const [data, setData, syncStatus] = useBOPStore('tool-id', { field1: '', field2: 0 })
+
+Rules:
+- toolId must be a unique kebab-case string matching the name in the metadata block
+- useBOPStore auto-saves with a 2-second debounce after any setData call
+- syncStatus is 'idle' | 'saving' | 'saved'
+
+SyncIndicator (REQUIRED in every tool — place at root of App return):
+  <SyncIndicator status={syncStatus} />
+It renders fixed in the bottom-right corner and shows saving/saved state. Never omit it.
+
+### Schema Block (output AFTER the WORKBENCH_CODE block)
+For every tool with persistent data, output:
+<BOP_SCHEMA>
+{
+  "toolId": "tool-id-matching-metadata",
+  "fields": {
+    "fieldName": { "type": "string | number | boolean | array | object", "label": "Human Label" }
+  }
+}
+</BOP_SCHEMA>
 
 ### Integration
 dashboard field meaning:
@@ -84,10 +109,11 @@ dashboard field meaning:
 
 ## Response Format
 1. One sentence describing what you're building
-2. Full component wrapped in <WORKBENCH_CODE> tags
-3. 2-3 suggested next iterations after the code block
+2. Full component in <WORKBENCH_CODE> tags
+3. <BOP_SCHEMA> block (for tools with persistent data)
+4. 2-3 suggested next iterations
 
-For refinements: acknowledge the change (1 sentence), then output the FULL updated component.
+For refinements: one sentence, then FULL updated component + updated schema if fields changed.
 
 ## Tone
 Confident, decisive, builder-mindset. Brief description then straight to code.`
@@ -103,18 +129,123 @@ function getSystemPrompt(firstName: string, businessName: string): string {
 // ─────────────────────────────────────────────
 // CODE UTILITIES
 // ─────────────────────────────────────────────
+const FENCE_RE  = /```(?:jsx?|tsx?|react|javascript|typescript)?\s*\n([\s\S]*?)```/
+const TAG_RE    = /<WORKBENCH_CODE>([\s\S]*?)<\/WORKBENCH_CODE>/
+const SCHEMA_RE = /<BOP_SCHEMA>([\s\S]*?)<\/BOP_SCHEMA>/
+
 function extractCode(text: string): string | null {
-  const match = /<WORKBENCH_CODE>([\s\S]*?)<\/WORKBENCH_CODE>/.exec(text)
-  return match ? match[1].trim() : null
+  const tagMatch = TAG_RE.exec(text)
+  if (tagMatch) return tagMatch[1].trim()
+  const fenceMatch = FENCE_RE.exec(text)
+  if (fenceMatch) return fenceMatch[1].trim()
+  return null
 }
 
-function stripCodeTags(text: string): string {
-  return text.replace(/<WORKBENCH_CODE>[\s\S]*?<\/WORKBENCH_CODE>/g, "").replace(/\n{3,}/g, "\n\n").trim()
+function extractSchema(text: string): Record<string, unknown> | null {
+  const match = SCHEMA_RE.exec(text)
+  if (!match) return null
+  try { return JSON.parse(match[1].trim()) as Record<string, unknown> } catch { return null }
 }
+
+function stripAllTags(text: string): string {
+  return text
+    .replace(TAG_RE,    "")
+    .replace(FENCE_RE,  "")
+    .replace(SCHEMA_RE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
+// ─────────────────────────────────────────────
+// BOP STORE — injected into every sandbox iframe
+// useBOPStore(toolId, initialData) and SyncIndicator
+// communicate with the parent via postMessage for localStorage persistence.
+// ─────────────────────────────────────────────
+const BOP_STORE_SCRIPT = `
+(function() {
+  var _listeners = {};
+  window.addEventListener('message', function(e) {
+    if (!e.data || e.data.type !== 'BOP_STORE_DATA') return;
+    var cb = _listeners[e.data.toolId];
+    if (cb) { cb(e.data.data); delete _listeners[e.data.toolId]; }
+  });
+
+  window.useBOPStore = function(toolId, initialData) {
+    var R = window.React;
+    var s1 = R.useState(initialData); var data = s1[0]; var _setD = s1[1];
+    var s2 = R.useState('idle');       var sync = s2[0]; var _setSy = s2[1];
+    var debRef  = R.useRef(null);
+    var loadRef = R.useRef(false);
+    var dataRef = R.useRef(initialData);
+
+    R.useEffect(function() { dataRef.current = data; }, [data]);
+
+    R.useEffect(function() {
+      if (loadRef.current) return;
+      _listeners[toolId] = function(stored) {
+        if (stored !== null && stored !== undefined) _setD(stored);
+        loadRef.current = true;
+      };
+      try { window.parent.postMessage({ type: 'BOP_STORE_GET', toolId: toolId }, '*'); } catch(e2){}
+      setTimeout(function() {
+        if (!loadRef.current) { loadRef.current = true; delete _listeners[toolId]; }
+      }, 1200);
+    }, []);
+
+    var setData = R.useCallback(function(updater) {
+      _setD(function(prev) {
+        var next = typeof updater === 'function' ? updater(prev) : updater;
+        dataRef.current = next;
+        return next;
+      });
+      _setSy('saving');
+      if (debRef.current) clearTimeout(debRef.current);
+      debRef.current = setTimeout(function() {
+        try { window.parent.postMessage({ type: 'BOP_STORE_SAVE', toolId: toolId, data: dataRef.current }, '*'); } catch(e2){}
+        _setSy('saved');
+        debRef.current = setTimeout(function() { _setSy('idle'); }, 2500);
+      }, 2000);
+    }, [toolId]);
+
+    return [data, setData, sync];
+  };
+
+  window.SyncIndicator = function(props) {
+    var R = window.React;
+    var status = props.status;
+    if (!status || status === 'idle') return null;
+    var isSaving = status === 'saving';
+    var color = isSaving ? '#F59E0B' : '#10B981';
+    return R.createElement('div', {
+      style: {
+        position:'fixed', bottom:14, right:14, display:'flex', alignItems:'center',
+        gap:6, background:'white', border:'1px solid #E5E7EB', borderRadius:20,
+        padding:'5px 12px 5px 9px', fontSize:11, fontWeight:600, color:color,
+        boxShadow:'0 1px 4px rgba(0,0,0,0.12)', zIndex:9999
+      }
+    },
+      R.createElement('svg', {
+        width:13, height:13, viewBox:'0 0 24 24', fill:'none', stroke:color, strokeWidth:2,
+        style:{ display:'block', animation: isSaving ? 'bop-spin 1s linear infinite' : 'none' }
+      },
+        R.createElement('path', { d:'M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z' })
+      ),
+      R.createElement('span', null, isSaving ? 'Saving...' : 'Saved to BOP')
+    );
+  };
+})();
+`
 
 // ─────────────────────────────────────────────
 // PREVIEW HTML BUILDER
 // ─────────────────────────────────────────────
+const ERROR_HTML = (msg: string) =>
+  `<div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:40px;text-align:center;font-family:system-ui">
+    <div style="font-size:32px">⚙️</div>
+    <p style="font-weight:600;color:#374151;margin:0;font-size:14px">Drafting in progress...</p>
+    <p style="font-size:11px;color:#9ca3af;margin:0;max-width:300px">${msg.replace(/</g, "&lt;")}</p>
+  </div>`
+
 function buildPreviewHTML(code: string): string {
   return `<!DOCTYPE html>
 <html>
@@ -126,19 +257,49 @@ function buildPreviewHTML(code: string): string {
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-  body { margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-  * { box-sizing: border-box; }
+  html,body{margin:0;padding:0;height:100%;font-family:system-ui,-apple-system,sans-serif}
+  *{box-sizing:border-box}
+  @keyframes bop-spin{to{transform:rotate(360deg)}}
+  #bop-loader{display:flex;align-items:center;justify-content:center;height:100vh}
+  #bop-loader svg{animation:bop-spin 1s linear infinite}
+  #root{display:none}
 </style>
 </head>
 <body>
+<div id="bop-loader">
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="12" cy="12" r="10" stroke="#002855" stroke-width="2" stroke-opacity="0.15"/>
+    <path d="M12 2a10 10 0 0 1 10 10" stroke="#002855" stroke-width="2" stroke-linecap="round"/>
+  </svg>
+</div>
 <div id="root"></div>
-<script type="text/babel">
-${code}
+<script>${BOP_STORE_SCRIPT}</script>
+<script>
+window.addEventListener('error', function(e) {
+  var loader = document.getElementById('bop-loader');
+  if (loader) loader.innerHTML = ${JSON.stringify(ERROR_HTML("Runtime error — reviewing generated code"))};
+  var root = document.getElementById('root');
+  if (root) root.style.display = 'none';
+  try { window.parent.postMessage({ type: 'PREVIEW_ERROR', message: e.message }, '*'); } catch(_){}
+});
 </script>
 <script type="text/babel">
-const container = document.getElementById('root');
-const root = ReactDOM.createRoot(container);
-root.render(React.createElement(App));
+(function() {
+  try {
+    ${code}
+    var loader = document.getElementById('bop-loader');
+    if (loader) loader.style.display = 'none';
+    var container = document.getElementById('root');
+    container.style.display = '';
+    var root = ReactDOM.createRoot(container);
+    root.render(React.createElement(App));
+    try { window.parent.postMessage({ type: 'PREVIEW_READY' }, '*'); } catch(_){}
+  } catch(e) {
+    var loader = document.getElementById('bop-loader');
+    if (loader) loader.innerHTML = ${JSON.stringify(ERROR_HTML("__MSG__"))}.replace('__MSG__', e.message || 'Syntax error in generated code');
+    try { window.parent.postMessage({ type: 'PREVIEW_ERROR', message: e.message }, '*'); } catch(_){}
+  }
+})();
 </script>
 </body>
 </html>`
@@ -428,27 +589,61 @@ export function WorkbenchPage() {
   const [messages,        setMessages]         = useState<ChatMessage[]>([])
   const [input,           setInput]            = useState("")
   const [isLoading,       setIsLoading]        = useState(false)
+  const [isRendering,     setIsRendering]      = useState(false)
+  const [previewError,    setPreviewError]     = useState<string | null>(null)
   const [error,           setError]            = useState<string | null>(null)
   const [previewUrl,      setPreviewUrl]        = useState<string | null>(null)
   const [deploy,          setDeploy]           = useState<DeployState>({
     open: false, step: "form", name: "", dashboard: "os",
   })
 
+  const [currentSchema,   setCurrentSchema]   = useState<Record<string, unknown> | null>(null)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef       = useRef<HTMLTextAreaElement>(null)
   const prevBlobRef    = useRef<string | null>(null)
+  const iframeRef      = useRef<HTMLIFrameElement>(null)
 
   const hasApiKey = !!import.meta.env.VITE_ANTHROPIC_API_KEY
 
-  // Rebuild blob URL whenever code changes
+  // Rebuild blob URL whenever code changes; start rendering spinner
   useEffect(() => {
     if (prevBlobRef.current) URL.revokeObjectURL(prevBlobRef.current)
-    if (!currentCode) { setPreviewUrl(null); return }
+    if (!currentCode) { setPreviewUrl(null); setIsRendering(false); setPreviewError(null); return }
+    setIsRendering(true)
+    setPreviewError(null)
     const blob = new Blob([buildPreviewHTML(currentCode)], { type: "text/html" })
     const url  = URL.createObjectURL(blob)
     prevBlobRef.current = url
     setPreviewUrl(url)
   }, [currentCode])
+
+  // Unified iframe message router: preview lifecycle + BOP persistent store
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      const msg = e.data as { type?: string; toolId?: string; data?: unknown; message?: string }
+      if (!msg?.type) return
+
+      if (msg.type === "PREVIEW_READY") {
+        setIsRendering(false)
+        setPreviewError(null)
+      } else if (msg.type === "PREVIEW_ERROR") {
+        setIsRendering(false)
+        setPreviewError(msg.message ?? "Unknown error")
+      } else if (msg.type === "BOP_STORE_GET" && msg.toolId) {
+        const stored = localStorage.getItem(`bopos_tool_data_${msg.toolId}`)
+        const data   = stored ? JSON.parse(stored) : null
+        iframeRef.current?.contentWindow?.postMessage(
+          { type: "BOP_STORE_DATA", toolId: msg.toolId, data },
+          "*"
+        )
+      } else if (msg.type === "BOP_STORE_SAVE" && msg.toolId) {
+        localStorage.setItem(`bopos_tool_data_${msg.toolId}`, JSON.stringify(msg.data))
+      }
+    }
+    window.addEventListener("message", onMessage)
+    return () => window.removeEventListener("message", onMessage)
+  }, [])
 
   // Cleanup on unmount
   useEffect(() => () => {
@@ -459,7 +654,11 @@ export function WorkbenchPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, isLoading])
 
-  const saveNewVersion = useCallback((code: string, label: string) => {
+  const saveNewVersion = useCallback((
+    code:    string,
+    label:   string,
+    schema?: Record<string, unknown> | null,
+  ) => {
     const id = crypto.randomUUID()
     setVersions((prev) => {
       const next: WorkbenchVersion = {
@@ -467,6 +666,7 @@ export function WorkbenchPage() {
         versionNumber: prev.length + 1,
         label:         label.slice(0, 60),
         code,
+        ...(schema ? { schema } : {}),
         createdAt:     new Date().toISOString(),
       }
       const updated = [...prev, next]
@@ -496,8 +696,9 @@ export function WorkbenchPage() {
     try {
       const systemPrompt = getSystemPrompt(firstName, businessName)
       const rawReply     = await callWorkbenchClaude([...messages, userMsg], systemPrompt)
-      const code         = extractCode(rawReply)
-      const display      = code ? stripCodeTags(rawReply) : rawReply
+      const code    = extractCode(rawReply)
+      const schema  = extractSchema(rawReply)
+      const display = stripAllTags(rawReply)
 
       const assistantMsg: ChatMessage = {
         id:             crypto.randomUUID(),
@@ -511,8 +712,9 @@ export function WorkbenchPage() {
 
       if (code) {
         setCurrentCode(code)
+        setCurrentSchema(schema)
         const label = display.split("\n")[0].replace(/^#+\s*/, "").trim() || "Iteration"
-        saveNewVersion(code, label)
+        saveNewVersion(code, label, schema)
         setCanvasTab("preview")
       }
     } catch (err) {
@@ -530,6 +732,7 @@ export function WorkbenchPage() {
   function handleVersionSelect(v: WorkbenchVersion) {
     setActiveVersionId(v.id)
     setCurrentCode(v.code)
+    setCurrentSchema(v.schema ?? null)
     setCanvasTab("preview")
   }
 
@@ -763,17 +966,39 @@ export function WorkbenchPage() {
               </div>
             </div>
           ) : canvasTab === "preview" ? (
-            <iframe
-              src={previewUrl ?? undefined}
-              className="w-full h-full border-0 bg-white"
-              title="Tool Preview"
-              sandbox="allow-scripts"
-            />
+            <div className="relative h-full w-full">
+              {/* Spinner overlay — shown while CDN scripts boot + React mounts */}
+              {isRendering && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#F0F2F5]">
+                  <Loader2 className="h-7 w-7 animate-spin text-[#002855]/30" />
+                  <p className="text-xs text-gray-400">Loading preview...</p>
+                </div>
+              )}
+              <iframe
+                ref={iframeRef}
+                key={previewUrl}
+                src={previewUrl ?? undefined}
+                className="w-full h-full border-0 bg-white"
+                title="Tool Preview"
+                sandbox="allow-scripts"
+                onLoad={() => setIsRendering(false)}
+              />
+            </div>
           ) : (
             <div className="h-full overflow-auto bg-[#011428]">
               <pre className="px-6 py-6 text-xs text-green-300/70 font-mono leading-relaxed whitespace-pre-wrap">
                 {currentCode}
               </pre>
+              {currentSchema && (
+                <div className="px-6 pb-8 border-t border-white/10 pt-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-white/25 mb-2">
+                    BOP Schema
+                  </p>
+                  <pre className="text-[11px] text-amber-300/60 font-mono leading-relaxed whitespace-pre-wrap">
+                    {JSON.stringify(currentSchema, null, 2)}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
         </div>
