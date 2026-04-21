@@ -2,13 +2,25 @@ import { createContext, useContext, useState, useCallback } from "react"
 import { DEFAULT_RHYTHM_ITEMS } from "@/components/anchor/anchor-data"
 import type { RhythmItem } from "@/components/anchor/anchor-types"
 
-const ITEMS_KEY = "bopos_anchor_items"
+const ITEMS_KEY      = "bopos_anchor_items"
+const SCHEDULES_KEY  = "bopos_anchor_schedules"
+const MIGRATION_KEY  = "bopos_anchor_migration"
+const MIGRATION_VER  = "2026-master-cadence"
 
 function loadItems(): RhythmItem[] {
   try {
+    // Version-gated migration — clears stale data and loads the 2026 Master Cadence
+    if (localStorage.getItem(MIGRATION_KEY) !== MIGRATION_VER) {
+      localStorage.removeItem(ITEMS_KEY)
+      localStorage.removeItem(SCHEDULES_KEY)
+      localStorage.setItem(MIGRATION_KEY, MIGRATION_VER)
+      return DEFAULT_RHYTHM_ITEMS
+    }
     const s = localStorage.getItem(ITEMS_KEY)
     return s ? JSON.parse(s) : DEFAULT_RHYTHM_ITEMS
-  } catch { return DEFAULT_RHYTHM_ITEMS }
+  } catch {
+    return DEFAULT_RHYTHM_ITEMS
+  }
 }
 
 function saveItems(items: RhythmItem[]) {

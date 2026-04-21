@@ -15,7 +15,7 @@ import { Badge }  from "@/components/ui/badge"
 import { AddRhythmDialog } from "./AddRhythmDialog"
 import { buildWeekGrid, firesInWeek, MONTH_ABBR, type GridWeek } from "./anchor-grid"
 import {
-  TIER_CONFIG,
+  SECTION_CONFIG,
   type FrequencyTier,
   type RhythmItem,
   type RhythmCategory,
@@ -405,11 +405,12 @@ export function AnchorEngine() {
   )
   const allItems = useMemo(() => [...items, ...dynamicMPRItems], [items, dynamicMPRItems])
 
-  const byTier = useMemo(() => {
-    const map: Record<FrequencyTier, RhythmItem[]> = {
-      daily: [], weekly: [], monthly: [], quarterly: [], "semi-annually": [], annually: [],
-    }
-    allItems.forEach((item) => map[item.frequency].push(item))
+  const bySection = useMemo(() => {
+    const map: Partial<Record<RhythmCategory, RhythmItem[]>> = {}
+    allItems.forEach((item) => {
+      if (!map[item.category]) map[item.category] = []
+      map[item.category]!.push(item)
+    })
     return map
   }, [allItems])
 
@@ -696,20 +697,20 @@ export function AnchorEngine() {
 
           {/* ── tbody ── */}
           <tbody>
-            {TIER_CONFIG.map((tier) => {
-              const tierItems = byTier[tier.id]
-              if (tierItems.length === 0) return null
+            {SECTION_CONFIG.map((section) => {
+              const sectionItems = bySection[section.id]
+              if (!sectionItems || sectionItems.length === 0) return null
               return (
-                <Fragment key={tier.id}>
+                <Fragment key={section.id}>
                   <tr>
-                    <td className={cn("sticky left-0 z-10 border-b border-t border-border/40 px-4 py-2 text-xs font-bold uppercase tracking-widest", tier.headerBg, tier.color)} style={{ width: LABEL_W, minWidth: LABEL_W }}>
-                      {tier.icon}&nbsp;{tier.label}
-                      <span className="ml-1.5 font-normal normal-case opacity-60">· {tier.sublabel}</span>
+                    <td className={cn("sticky left-0 z-10 border-b border-t border-border/40 px-4 py-2 text-xs font-bold uppercase tracking-widest", section.headerBg, section.color)} style={{ width: LABEL_W, minWidth: LABEL_W }}>
+                      {section.icon}&nbsp;{section.label}
+                      <span className="ml-1.5 font-normal normal-case opacity-60">· {section.sublabel}</span>
                     </td>
-                    <td colSpan={colCount} className={cn("border-b border-t border-border/30", tier.headerBg)} />
+                    <td colSpan={colCount} className={cn("border-b border-t border-border/30", section.headerBg)} />
                   </tr>
 
-                  {tierItems.map((item) => {
+                  {sectionItems.map((item) => {
                     const baseSet = publishedSchedules[item.id] ?? new Set<number>()
                     const removed = draftRemovedByItem[item.id]
                     const added   = draftAddedByItem[item.id]

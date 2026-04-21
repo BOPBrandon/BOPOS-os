@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom"
-import { LayoutDashboard, Map, Anchor, ChevronRight, LogOut } from "lucide-react"
+import { LayoutDashboard, Map, Anchor, ChevronRight, LogOut, Hammer } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Separator } from "@/components/ui/separator"
 import { APP_NAME, APP_FULL_NAME, PRIMARY_DASHBOARDS } from "@/bopos-config"
@@ -72,6 +72,39 @@ export function Sidebar() {
             </NavLink>
           )
         })}
+      </nav>
+
+      <Separator className="bg-bop-white/10" />
+
+      {/* Build Tools */}
+      <nav className="flex flex-col gap-1 px-3 py-4">
+        <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-widest text-bop-white/40">
+          Build
+        </p>
+        <NavLink
+          to="/workbench"
+          className={({ isActive }) =>
+            cn(
+              "group flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+              isActive
+                ? "bg-bop-light-orange text-white"
+                : "text-bop-white/70 hover:bg-bop-white/10 hover:text-bop-white"
+            )
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Hammer className="h-4 w-4 shrink-0" />
+              <span className="flex-1 leading-tight">The Workbench</span>
+              <ChevronRight
+                className={cn(
+                  "h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-60",
+                  isActive && "opacity-60"
+                )}
+              />
+            </>
+          )}
+        </NavLink>
       </nav>
 
       <Separator className="bg-bop-white/10" />

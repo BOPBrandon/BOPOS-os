@@ -1,21 +1,18 @@
 /**
  * ============================================================
- * Anchor Engine — Default Rhythm Data
+ * Anchor Engine — Master Cadence Data
  * ============================================================
- * Pre-populated rhythm items for a new BOPOS client.
- * Non-negotiables are locked. Process Training items pull
- * from the five MPR systems.
- *
- * NON-NEGOTIABLE RULE (hard-coded):
- *   Vision Story Review → semi-annually → fires months 2,4,6,8,10,12
- *   This item can NEVER be deleted or moved.
+ * BOP 2026 Master Schedule — migrated from image_18 / image_19.
+ * Categories match the visual section groupings in the Anchor grid.
+ * Frequency drives the fire logic (firesInWeek) independently of
+ * which visual section an item belongs to.
  * ============================================================
  */
 
 import type { RhythmItem } from "./anchor-types"
 import { SEMI_ANNUAL_MONTHS } from "./anchor-types"
 
-function id(slug: string) { return `default-${slug}` }
+function id(slug: string) { return `bop-${slug}` }
 const TODAY = new Date().toISOString().slice(0, 10)
 
 // ─────────────────────────────────────────────
@@ -36,172 +33,92 @@ export const NON_NEGOTIABLE_ITEMS: RhythmItem[] = [
 ]
 
 // ─────────────────────────────────────────────
-// PROCESS TRAINING (pulled from the 5 MPR systems)
+// MASTER CADENCE — BOP 2026 Schedule
 // ─────────────────────────────────────────────
-export const PROCESS_TRAINING_ITEMS: RhythmItem[] = [
-  {
-    id:          id("training-marketing"),
-    label:       "Marketing System Training",
-    description: "Review and train the team on the current marketing system: lead gen, content, and brand standards.",
-    frequency:   "monthly",
-    category:    "process-training",
-    mprSystem:   "marketing",
-    isLocked:    false,
-    owner:       "Marketing Lead",
-    createdAt:   TODAY,
-  },
-  {
-    id:          id("training-sales"),
-    label:       "Sales System Training",
-    description: "Pipeline review, objection handling, CRM hygiene, and closing sequence walk-through.",
-    frequency:   "monthly",
-    category:    "process-training",
-    mprSystem:   "sales",
-    isLocked:    false,
-    owner:       "Sales Lead",
-    createdAt:   TODAY,
-  },
-  {
-    id:          id("training-operations"),
-    label:       "Operations System Training",
-    description: "Delivery standards, scheduling process, quality control checklist, and escalation protocols.",
-    frequency:   "monthly",
-    category:    "process-training",
-    mprSystem:   "operations",
-    isLocked:    false,
-    owner:       "Ops Lead",
-    createdAt:   TODAY,
-  },
-  {
-    id:          id("training-administration"),
-    label:       "Administration System Training",
-    description: "Finance, HR, legal, and tool stack review. Ensure every team member can access what they need.",
-    frequency:   "quarterly",
-    category:    "process-training",
-    mprSystem:   "administration",
-    isLocked:    false,
-    owner:       "Owner / Admin Lead",
-    createdAt:   TODAY,
-  },
-  {
-    id:          id("training-handbook"),
-    label:       "Handbook Review & Update",
-    description: "Review core values in action, onboarding updates, role clarity changes, and culture health.",
-    frequency:   "quarterly",
-    category:    "process-training",
-    mprSystem:   "handbook",
-    isLocked:    false,
-    owner:       "Owner",
-    createdAt:   TODAY,
-  },
+
+// WEEKLY
+const WEEKLY_ITEMS: RhythmItem[] = [
+  { id: id("team-meeting"),          label: "Team Meeting",               frequency: "weekly", category: "weekly",  owner: "BW", createdAt: TODAY },
+  { id: id("coaches-meeting"),       label: "Coaches Meeting",            frequency: "weekly", category: "weekly",  owner: "TJ", createdAt: TODAY },
+  { id: id("mktg-sales-meeting"),    label: "Marketing & Sales Meeting",  frequency: "weekly", category: "weekly",  owner: "SB", createdAt: TODAY },
+  { id: id("check-ins"),             label: "Check Ins",                  frequency: "weekly", category: "weekly",  owner: "AS", createdAt: TODAY },
+  { id: id("coaches-scorecard"),     label: "Coaches Scorecard",          frequency: "weekly", category: "weekly",  owner: "TJ", createdAt: TODAY },
 ]
 
-// ─────────────────────────────────────────────
-// GENERAL DEFAULT RHYTHMS
-// ─────────────────────────────────────────────
-export const DEFAULT_GENERAL_ITEMS: RhythmItem[] = [
-  // Daily
-  {
-    id:          id("daily-huddle"),
-    label:       "Daily Huddle",
-    description: "10-minute team sync: good news, daily numbers, stuck points.",
-    frequency:   "daily",
-    category:    "general",
-    owner:       "Integrator",
-    createdAt:   TODAY,
-  },
+// TRAINING
+const TRAINING_ITEMS: RhythmItem[] = [
+  { id: id("training-admin-hr"),     label: "Admin/HR Reviews",            frequency: "monthly", category: "training", owner: "AB", createdAt: TODAY },
+  { id: id("training-marketing"),    label: "Marketing Training",          frequency: "monthly", category: "training", owner: "AS", createdAt: TODAY },
+  { id: id("training-sales"),        label: "Sales Training",              frequency: "monthly", category: "training", owner: "SB", createdAt: TODAY },
+  { id: id("training-bop-module"),   label: "BOP Module Training",         frequency: "monthly", category: "training", owner: "TJ", createdAt: TODAY },
+  { id: id("training-art-coaching"), label: "Art of Coaching Training",    frequency: "monthly", category: "training", owner: "TJ", createdAt: TODAY },
+  { id: id("training-construction"), label: "Construction Training",       frequency: "monthly", category: "training", owner: "TJ", createdAt: TODAY },
+  { id: id("training-streak-tech"),  label: "Streak/Slack/Tech Training",  frequency: "monthly", category: "training", owner: "TJ", createdAt: TODAY },
+  { id: id("training-maturity-26"),  label: "2026 Maturity Training",      frequency: "monthly", category: "training", owner: "SB", createdAt: TODAY },
+]
 
-  // Weekly
-  {
-    id:          id("weekly-scorecard"),
-    label:       "Weekly Scorecard Review",
-    description: "Review the 5–15 leading indicators. Any number off-track gets an owner and a plan.",
-    frequency:   "weekly",
-    category:    "general",
-    owner:       "Integrator",
-    createdAt:   TODAY,
-  },
-  {
-    id:          id("weekly-lma"),
-    label:       "L10 / Leadership Meeting",
-    description: "Weekly 90-minute leadership team meeting: Scorecard, Rocks, headlines, IDS.",
-    frequency:   "weekly",
-    category:    "general",
-    owner:       "Visionary + Integrator",
-    createdAt:   TODAY,
-  },
+// BOP BIRTHDAYS & ANNIVERSARIES (all owned by AS)
+const BOP_BIRTHDAY_ITEMS: RhythmItem[] = [
+  { id: id("bday-birthday"),         label: "Birthday",              frequency: "annually", category: "bop-birthdays", owner: "AS", createdAt: TODAY },
+  { id: id("bday-kids-spouse"),      label: "Kids/Spouse Birthdays", frequency: "annually", category: "bop-birthdays", owner: "AS", createdAt: TODAY },
+  { id: id("bday-work-anniv"),       label: "Work Anniversary",      frequency: "annually", category: "bop-birthdays", owner: "AS", createdAt: TODAY },
+  { id: id("bday-family-anniv"),     label: "Family Anniversary",    frequency: "annually", category: "bop-birthdays", owner: "AS", createdAt: TODAY },
+  { id: id("bday-client-anniv"),     label: "Client Anniversary",    frequency: "annually", category: "bop-birthdays", owner: "AS", createdAt: TODAY },
+]
 
-  // Monthly
-  {
-    id:          id("monthly-financials"),
-    label:       "Monthly Financial Review",
-    description: "P&L, Real Revenue, bank account balances, Profit First allocations. Validate all figures.",
-    frequency:   "monthly",
-    category:    "general",
-    owner:       "Owner",
-    createdAt:   TODAY,
-  },
-  {
-    id:          id("monthly-1on1"),
-    label:       "Team 1-on-1s",
-    description: "Individual check-ins with each direct report: wins, challenges, development.",
-    frequency:   "monthly",
-    category:    "general",
-    owner:       "Integrator",
-    createdAt:   TODAY,
-  },
+// QB ROLES
+const QB_ROLE_ITEMS: RhythmItem[] = [
+  { id: id("qb-12wk-prep"),          label: "12 Week Plan LIVE Preparation", frequency: "quarterly", category: "qb-roles", owner: "BG", createdAt: TODAY },
+]
 
-  // Quarterly
-  {
-    id:          id("quarterly-rocks"),
-    label:       "Quarterly Rocks Planning",
-    description: "Set the 3–5 most important priorities for the next 90 days. Assign owners. Remove blockers.",
-    frequency:   "quarterly",
-    category:    "general",
-    owner:       "Leadership Team",
-    createdAt:   TODAY,
-  },
-  {
-    id:          id("quarterly-profit-distribution"),
-    label:       "Profit Distribution",
-    description: "Transfer 50% of Profit account balance to owners. Review tax account balance.",
-    frequency:   "quarterly",
-    category:    "general",
-    owner:       "Owner",
-    createdAt:   TODAY,
-  },
+// MONTHLY
+const MONTHLY_ITEMS: RhythmItem[] = [
+  { id: id("monthly-12wk-review"),   label: "12 Week Plan Review",         frequency: "monthly", category: "monthly", owner: "BW", createdAt: TODAY },
+  { id: id("monthly-vision-day"),    label: "Vision Day",                  frequency: "monthly", category: "monthly", owner: "SB", createdAt: TODAY },
+  { id: id("monthly-speaker"),       label: "Speaker Events",              frequency: "monthly", category: "monthly", owner: "AS", createdAt: TODAY },
+  { id: id("monthly-speaker-prep"),  label: "PREP for Speaker Events",     frequency: "monthly", category: "monthly", owner: "AS", createdAt: TODAY },
+  { id: id("monthly-masterclass"),   label: "Masterclasses & Roundtables", frequency: "monthly", category: "monthly", owner: "KD", createdAt: TODAY },
+  { id: id("monthly-prayer"),        label: "Team Prayer Day",             frequency: "monthly", category: "monthly", owner: "AS", createdAt: TODAY },
+  { id: id("monthly-mktg-review"),   label: "MARKETING Review",            frequency: "monthly", category: "monthly", owner: "AS", createdAt: TODAY },
+  { id: id("monthly-l2-dashboard"),  label: "Level Two Dashboard Review",  frequency: "monthly", category: "monthly", owner: "SB", createdAt: TODAY },
+]
 
-  // Semi-Annually (non-negotiable already covers Vision Story Review)
-  {
-    id:          id("semi-annual-performance-reviews"),
-    label:       "Team Performance Reviews",
-    description: "Formal review of each team member against role scorecard and accountabilities.",
-    frequency:   "semi-annually",
-    category:    "general",
-    owner:       "Integrator",
-    createdAt:   TODAY,
-    activeMonths: [1, 7],
-  },
+// QUARTERLY
+const QUARTERLY_ITEMS: RhythmItem[] = [
+  { id: id("qtr-ideal-weekly"),      label: "Ideal Weekly Schedule Review", frequency: "quarterly", category: "quarterly", owner: "AS", createdAt: TODAY },
+]
 
-  // Annually
-  {
-    id:          id("annual-planning"),
-    label:       "Annual Planning Day",
-    description: "Full-day off-site: review the year, set the 3 Annual Goals, map the next 52 weeks.",
-    frequency:   "annually",
-    category:    "general",
-    owner:       "Leadership Team",
-    createdAt:   TODAY,
-  },
-  {
-    id:          id("annual-exit-review"),
-    label:       "Exit & Succession Review",
-    description: "Assess business value, key-person risk, and readiness to run without the owner.",
-    frequency:   "annually",
-    category:    "general",
-    owner:       "Owner",
-    createdAt:   TODAY,
-  },
+// SEMI-ANNUALLY
+const SEMI_ANNUAL_ITEMS: RhythmItem[] = [
+  { id: id("semi-team-dinner"),      label: "Local Team Dinner",  frequency: "semi-annually", category: "semi-annually", createdAt: TODAY, activeMonths: [...SEMI_ANNUAL_MONTHS] },
+  { id: id("semi-bank-eval"),        label: "Bank Account Eval",  frequency: "semi-annually", category: "semi-annually", createdAt: TODAY, activeMonths: [...SEMI_ANNUAL_MONTHS] },
+  { id: id("semi-pl-review"),        label: "P&L Review",         frequency: "semi-annually", category: "semi-annually", createdAt: TODAY, activeMonths: [...SEMI_ANNUAL_MONTHS] },
+]
+
+// ANNUALLY
+const ANNUAL_ITEMS: RhythmItem[] = [
+  { id: id("annual-delegation"),     label: "Director's Complete Delegation Roadmap", frequency: "annually", category: "annually", createdAt: TODAY },
+  { id: id("annual-bop-offsite"),    label: "BOP Offsite Training",                   frequency: "annually", category: "annually", createdAt: TODAY },
+  { id: id("annual-perf-evals"),     label: "Perf. Evals",                            frequency: "annually", category: "annually", createdAt: TODAY },
+  { id: id("annual-prep-week"),      label: "PREP WEEK",                              frequency: "annually", category: "annually", createdAt: TODAY },
+  { id: id("annual-letter"),         label: "Annual Letter",                          frequency: "annually", category: "annually", createdAt: TODAY },
+  { id: id("annual-financial-barn"), label: "Financial Barn",                         frequency: "annually", category: "annually", createdAt: TODAY },
+  { id: id("annual-next-budget"),    label: "Next Year Budget",                       frequency: "annually", category: "annually", createdAt: TODAY },
+  { id: id("annual-estate-plan"),    label: "Estate Planning Eval",                   frequency: "annually", category: "annually", createdAt: TODAY },
+  { id: id("annual-insurance"),      label: "Insurance Eval",                         frequency: "annually", category: "annually", createdAt: TODAY },
+  { id: id("annual-coach-sched"),    label: "COACH: Coaching Schedule for '26",       frequency: "annually", category: "annually", createdAt: TODAY },
+  { id: id("annual-swag"),           label: "SWAG Inventory/Order",                   frequency: "annually", category: "annually", createdAt: TODAY },
+]
+
+export const MASTER_CADENCE_ITEMS: RhythmItem[] = [
+  ...WEEKLY_ITEMS,
+  ...TRAINING_ITEMS,
+  ...BOP_BIRTHDAY_ITEMS,
+  ...QB_ROLE_ITEMS,
+  ...MONTHLY_ITEMS,
+  ...QUARTERLY_ITEMS,
+  ...SEMI_ANNUAL_ITEMS,
+  ...ANNUAL_ITEMS,
 ]
 
 // ─────────────────────────────────────────────
@@ -209,6 +126,5 @@ export const DEFAULT_GENERAL_ITEMS: RhythmItem[] = [
 // ─────────────────────────────────────────────
 export const DEFAULT_RHYTHM_ITEMS: RhythmItem[] = [
   ...NON_NEGOTIABLE_ITEMS,
-  ...PROCESS_TRAINING_ITEMS,
-  ...DEFAULT_GENERAL_ITEMS,
+  ...MASTER_CADENCE_ITEMS,
 ]

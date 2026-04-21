@@ -10,10 +10,11 @@ import { MPRDashboard } from "@/components/mpr"
 import { AnchorEngine } from "@/components/anchor/AnchorEngine"
 import { HomePage } from "@/pages/HomePage"
 import { VisionStoryPage } from "@/pages/VisionStoryPage"
+import { WorkbenchPage } from "@/pages/WorkbenchPage"
 import { SignIn } from "@/pages/SignIn"
 import { OpeningFrame } from "@/pages/OpeningFrame"
-// @ts-expect-error — JSX component, no type declarations
-import BOPOSOnboarding from "./components/BOPOSOnboarding"
+import { OnboardingFlow } from "@/pages/OnboardingFlow"
+import type { OnboardingData } from "@/pages/OnboardingFlow"
 
 const TOKEN_KEY   = "bopos_token"
 const PROFILE_KEY = "bopos_profile"
@@ -30,44 +31,62 @@ export default function App() {
       return null
     }
   })
-  const [creatingAccount,  setCreatingAccount]  = useState(false)
   const [showOpeningFrame, setShowOpeningFrame] = useState(false)
+  const [showOnboarding,   setShowOnboarding]   = useState(false)
 
-  // ── Gate 1: Not signed in ─────────────────────────────────
-  if (!token && !creatingAccount) {
+  // ── Gate 1: No token → Sign In ────────────────────────────
+  if (!token) {
     return (
       <SignIn
         onSignIn={() => {
           setToken(localStorage.getItem(TOKEN_KEY))
           setShowOpeningFrame(true)
         }}
-        onCreateAccount={() => setCreatingAccount(true)}
+        onCreateAccount={() => {
+          const newToken = "bopos_session_" + Date.now()
+          localStorage.setItem(TOKEN_KEY, newToken)
+          setToken(newToken)
+          setShowOpeningFrame(true)
+        }}
       />
     )
   }
 
-  // ── Gate 2: No profile → onboarding (sign-up or orphaned token) ──
-  if (!profile) {
-    function handleOnboardingComplete(data: object) {
-      localStorage.setItem(PROFILE_KEY, JSON.stringify(data))
-      if (!token) {
-        const newToken = "bopos_session_" + Date.now()
-        localStorage.setItem(TOKEN_KEY, newToken)
-        setToken(newToken)
-      }
-      setCreatingAccount(false)
-      setProfile(data)
-      setShowOpeningFrame(true)
-    }
-    return <BOPOSOnboarding onComplete={handleOnboardingComplete} />
-  }
-
-  // ── Gate 2.5: Opening Frame — shown once per session after auth ──
+  // ── Gate 2: Welcome screen (once per session after auth) ──
   if (showOpeningFrame) {
-    return <OpeningFrame onEnter={() => setShowOpeningFrame(false)} />
+    return (
+      <OpeningFrame
+        onEnter={() => {
+          setShowOpeningFrame(false)
+          if (!profile) setShowOnboarding(true)
+        }}
+      />
+    )
   }
 
-  // ── Gate 3: Fully authenticated ──────────────────────────
+  // ── Gate 3: New-user onboarding (triggered from OpeningFrame) ──
+  if (showOnboarding) {
+    function handleOnboardingComplete(data: OnboardingData) {
+      const nameParts  = data.name.trim().split(" ")
+      const profileData = {
+        ownerFirstName:  nameParts[0] ?? "",
+        ownerLastName:   nameParts.slice(1).join(" "),
+        ownerName:       data.name.trim(),
+        businessName:    data.businessName,
+        location:        data.location,
+        industry:        data.industry,
+        employeeCount:   data.employeeCount,
+        yearsInBusiness: data.yearsInBusiness,
+        createdAt:       new Date().toISOString(),
+      }
+      localStorage.setItem(PROFILE_KEY, JSON.stringify(profileData))
+      setProfile(profileData)
+      setShowOnboarding(false)
+    }
+    return <OnboardingFlow onComplete={handleOnboardingComplete} />
+  }
+
+  // ── Gate 4: Fully authenticated → Command Center ─────────
   return (
     <AnchorProvider>
     <MPRProvider>
@@ -84,6 +103,9 @@ export default function App() {
               <Route path="/mpr" element={<MPRDashboard />} />
               <Route path="/anchor" element={<AnchorEngine />} />
             </Route>
+
+            {/* Full-screen Workbench — standalone, no Layout sidebar */}
+            <Route path="/workbench" element={<WorkbenchPage />} />
 
             {/* Catch-all → Command Center */}
             <Route path="*" element={<Navigate to="/home" replace />} />
