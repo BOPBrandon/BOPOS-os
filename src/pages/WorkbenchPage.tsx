@@ -12,9 +12,22 @@ import { Link } from "react-router-dom"
 import {
   Hammer, Clock, Send, Loader2, AlertCircle,
   Code2, Eye, Rocket, Save, CheckCircle2, X,
-  Terminal, ChevronLeft, Cloud,
+  Terminal, ChevronLeft, Cloud, RefreshCw,
 } from "lucide-react"
-import { LiveProvider, LivePreview, LiveError } from "react-live"
+// Extra icons injected into the sandbox so AI-generated tools can use them without imports
+import {
+  ChevronDown, ChevronUp, ChevronRight,
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
+  Plus, Minus, Check, Edit3, Trash2, Copy, Download,
+  Search, Filter, SlidersHorizontal,
+  DollarSign, TrendingUp, TrendingDown, BarChart2, BarChart3,
+  PieChart, LineChart, Percent, Calculator,
+  Users, User, Building2, Briefcase, Target, Award, Star,
+  Calendar, Bell, Timer,
+  AlertTriangle, Info, CheckCircle, Circle, XCircle,
+  List, ListChecks, ClipboardList, Layers, EyeOff, ExternalLink,
+} from "lucide-react"
+import { LiveProvider, LivePreview, useLiveContext } from "react-live"
 import { cn } from "@/lib/utils"
 import { useProfile } from "@/context/ProfileContext"
 
@@ -64,9 +77,11 @@ You design and build custom tools, dashboards, calculators, trackers, and intera
 
 ### Code Output
 - Use React + Tailwind CSS exclusively. Tailwind works natively — all classes render instantly.
-- Every tool must be standalone and self-contained — no import/export syntax, no external dependencies
-- Define your component as: function App() { ... } — the preview engine mounts it automatically
-- React hooks (useState, useEffect, useCallback, useRef, useMemo, useReducer) are all available directly in scope — use them without React. prefix
+- **NO import statements of any kind.** The renderer is a sandboxed function scope, not a module. Imports will crash it.
+- **NO export keywords.** Just define: function App() { ... }
+- React hooks (useState, useEffect, useCallback, useRef, useMemo, useReducer) are in scope — use without React. prefix
+- Lucide icons are in scope: DollarSign, TrendingUp, TrendingDown, Users, Target, Calendar, Clock, CheckCircle2, AlertCircle, Plus, Minus, Trash2, Edit3, Save, ArrowUp, ArrowDown, BarChart2, PieChart, and more — use directly as JSX without importing
+- useBOPStore and SyncIndicator are in scope — never import them
 - Wrap ALL code in <WORKBENCH_CODE> and </WORKBENCH_CODE> tags
 
 ### Metadata Block (required at top of every component)
@@ -135,15 +150,28 @@ function getSystemPrompt(firstName: string, businessName: string): string {
 // ─────────────────────────────────────────────
 // CODE UTILITIES
 // ─────────────────────────────────────────────
-const FENCE_RE  = /```(?:jsx?|tsx?|react|javascript|typescript)?\s*\n([\s\S]*?)```/
-const TAG_RE    = /<WORKBENCH_CODE>([\s\S]*?)<\/WORKBENCH_CODE>/
-const SCHEMA_RE = /<BOP_SCHEMA>([\s\S]*?)<\/BOP_SCHEMA>/
+const TAG_RE       = /<WORKBENCH_CODE>([\s\S]*?)<\/WORKBENCH_CODE>/
+const SCHEMA_RE    = /<BOP_SCHEMA>([\s\S]*?)<\/BOP_SCHEMA>/
+// Matches any fenced block regardless of language tag (superset of old FENCE_RE)
+const ANY_FENCE_RE = /```[^\n]*\n([\s\S]*?)```/
 
 function extractCode(text: string): string | null {
+  // Priority 1: explicit <WORKBENCH_CODE> tags
   const tagMatch = TAG_RE.exec(text)
   if (tagMatch) return tagMatch[1].trim()
-  const fenceMatch = FENCE_RE.exec(text)
+
+  // Priority 2: any fenced code block (```jsx, ```js, ```, etc.)
+  const fenceMatch = ANY_FENCE_RE.exec(text)
   if (fenceMatch) return fenceMatch[1].trim()
+
+  // Priority 3: bare function App() without any wrapper
+  const appIdx = text.indexOf("function App()")
+  if (appIdx !== -1) {
+    const metaIdx = text.lastIndexOf("// TOOL METADATA", appIdx)
+    const start = metaIdx !== -1 ? metaIdx : appIdx
+    return text.slice(start).trim()
+  }
+
   return null
 }
 
@@ -155,9 +183,9 @@ function extractSchema(text: string): Record<string, unknown> | null {
 
 function stripAllTags(text: string): string {
   return text
-    .replace(TAG_RE,    "")
-    .replace(FENCE_RE,  "")
-    .replace(SCHEMA_RE, "")
+    .replace(TAG_RE,       "")
+    .replace(ANY_FENCE_RE, "")
+    .replace(SCHEMA_RE,    "")
     .replace(/\n{3,}/g, "\n\n")
     .trim()
 }
@@ -166,6 +194,47 @@ function stripAllTags(text: string): string {
 function prepareCode(raw: string): string {
   const t = raw.trimEnd()
   return /\brender\s*\(/.test(t) ? t : t + "\nrender(<App />)"
+}
+
+// Strip everything that would crash the Babel transform inside react-live:
+// ES module imports, export keywords, and stray wrapper tags.
+function sanitizeCode(raw: string): string {
+  const lines = raw.split("\n")
+  const out: string[] = []
+  let inMultiLineImport = false
+
+  for (const line of lines) {
+    const t = line.trim()
+
+    // Multi-line import continuation: skip until we see 'from "..."'
+    if (inMultiLineImport) {
+      if (/\bfrom\s+['"]/.test(t)) inMultiLineImport = false
+      continue
+    }
+
+    // Single or start-of-multiline import statement
+    if (t.startsWith("import ") || t.startsWith("import{")) {
+      // If 'from' is on this line it's a complete single-line import
+      if (!/\bfrom\s+['"]/.test(t)) inMultiLineImport = true
+      continue
+    }
+
+    // Strip 'export default' and 'export' keyword before declarations
+    const stripped = line
+      .replace(/^(\s*)export\s+default\s+/, "$1")
+      .replace(/^(\s*)export\s+(?=(?:function|class|const|let|var)\b)/, "$1")
+
+    // Drop stray WORKBENCH_CODE XML tags
+    if (t === "<WORKBENCH_CODE>" || t === "</WORKBENCH_CODE>") continue
+
+    out.push(stripped)
+  }
+
+  return out
+    .join("\n")
+    .replace(/<BOP_SCHEMA>[\s\S]*?<\/BOP_SCHEMA>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
 }
 
 // ─────────────────────────────────────────────
@@ -237,17 +306,27 @@ function SyncIndicatorImpl({ status }: { status: "idle" | "saving" | "saved" }) 
 
 // ─────────────────────────────────────────────
 // SANDBOX SCOPE — passed to every LiveProvider
-// Provides React hooks + BOP utilities to AI-generated code.
+// Provides React hooks + BOP utilities + Lucide icons to AI-generated code.
+// Injecting icons here means AI code never needs import statements.
 // ─────────────────────────────────────────────
 const SANDBOX_SCOPE = {
-  useState,
-  useEffect,
-  useCallback,
-  useRef,
-  useMemo,
-  useReducer,
-  useBOPStore:    useBOPStoreImpl,
-  SyncIndicator:  SyncIndicatorImpl,
+  // React hooks
+  useState, useEffect, useCallback, useRef, useMemo, useReducer,
+  // BOP utilities
+  useBOPStore:   useBOPStoreImpl,
+  SyncIndicator: SyncIndicatorImpl,
+  // Lucide icons — available as <DollarSign />, <TrendingUp />, etc.
+  ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
+  ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
+  Plus, Minus, Check, Edit3, Trash2, Copy, Download,
+  Search, Filter, SlidersHorizontal,
+  DollarSign, TrendingUp, TrendingDown, BarChart2, BarChart3,
+  PieChart, LineChart, Percent, Calculator,
+  Users, User, Building2, Briefcase, Target, Award, Star,
+  Calendar, Clock, Bell, Timer,
+  AlertCircle, AlertTriangle, Info, CheckCircle, CheckCircle2, Circle, XCircle,
+  Loader2, Eye, EyeOff, Save, X, RefreshCw, ExternalLink,
+  List, ListChecks, ClipboardList, Layers,
 }
 
 // ─────────────────────────────────────────────
@@ -273,6 +352,24 @@ class PreviewBoundary extends Component<
     }
     return this.props.children
   }
+}
+
+// ─────────────────────────────────────────────
+// CUSTOM LIVE ERROR — replaces red crash dump with a friendly message
+// Must be used inside <LiveProvider> (uses useLiveContext internally)
+// ─────────────────────────────────────────────
+function CustomLiveError() {
+  const { error } = useLiveContext()
+  if (!error) return null
+  return (
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-gray-50/96 p-10 text-center">
+      <span className="text-3xl">⚙️</span>
+      <p className="text-sm font-semibold text-gray-700">Polishing the code... one moment.</p>
+      <p className="text-[11px] text-gray-400 max-w-sm leading-relaxed font-mono opacity-80">
+        {error}
+      </p>
+    </div>
+  )
 }
 
 // ─────────────────────────────────────────────
@@ -554,6 +651,9 @@ export function WorkbenchPage() {
   const [currentCode,     setCurrentCode]   = useState("")
   const [currentSchema,   setCurrentSchema] = useState<Record<string, unknown> | null>(null)
   const [canvasTab,       setCanvasTab]     = useState<"preview" | "code">("preview")
+
+  // Sanitized code: strips imports, export keywords, stray tags — what actually hits Babel
+  const sanitizedCode = useMemo(() => (currentCode ? sanitizeCode(currentCode) : ""), [currentCode])
   const [messages,        setMessages]      = useState<ChatMessage[]>([])
   const [input,           setInput]         = useState("")
   const [isLoading,       setIsLoading]     = useState(false)
@@ -562,13 +662,31 @@ export function WorkbenchPage() {
     open: false, step: "form", name: "", dashboard: "os",
   })
 
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef       = useRef<HTMLTextAreaElement>(null)
-  const hasApiKey      = !!import.meta.env.VITE_ANTHROPIC_API_KEY
+  const messagesEndRef  = useRef<HTMLDivElement>(null)
+  const inputRef        = useRef<HTMLTextAreaElement>(null)
+  const hasApiKey       = !!import.meta.env.VITE_ANTHROPIC_API_KEY
+  // Tracks which message id we last extracted code from — prevents double-processing
+  const lastExtractedId = useRef<string | null>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages, isLoading])
+
+  // Message-to-Canvas bridge — safety net that fires whenever the messages list updates.
+  // If handleSend already extracted code (hasCode === true), this is a no-op.
+  // If extraction was missed (unsupported format), this catches it with enhanced parsing.
+  useEffect(() => {
+    const last = messages[messages.length - 1]
+    if (!last || last.role !== "assistant") return
+    if (last.id === lastExtractedId.current) return  // already processed
+    const code = extractCode(last.content)
+    if (!code) return
+    lastExtractedId.current = last.id
+    if (code === currentCode) return  // handleSend already set it
+    setCurrentCode(code)
+    setCurrentSchema(extractSchema(last.content))
+    setCanvasTab("preview")
+  }, [messages, currentCode])
 
   const saveNewVersion = useCallback((
     code:    string,
@@ -655,6 +773,17 @@ export function WorkbenchPage() {
   function handleManualSave() {
     if (!currentCode) return
     saveNewVersion(currentCode, "Manual save")
+  }
+
+  function handleRefreshPreview() {
+    const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")
+    if (!lastAssistant) return
+    const code = extractCode(lastAssistant.content)
+    if (!code) return
+    lastExtractedId.current = lastAssistant.id
+    setCurrentCode(code)
+    setCurrentSchema(extractSchema(lastAssistant.content))
+    setCanvasTab("preview")
   }
 
   function handleDeploySubmit() {
@@ -846,6 +975,17 @@ export function WorkbenchPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Refresh Preview — manual bridge trigger */}
+            <button
+              onClick={handleRefreshPreview}
+              disabled={!messages.some((m) => m.role === "assistant")}
+              title="Re-extract code from last Architect response"
+              className="flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-500 hover:border-gray-300 hover:text-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Refresh Preview
+            </button>
+
             {currentCode && (
               <button
                 onClick={handleManualSave}
@@ -895,8 +1035,9 @@ export function WorkbenchPage() {
             </div>
           ) : (
             // ── Live Canvas ──────────────────────────────
+            // sanitizedCode has imports/exports stripped — safe for Babel inside react-live
             <LiveProvider
-              code={prepareCode(currentCode)}
+              code={prepareCode(sanitizedCode)}
               scope={SANDBOX_SCOPE}
               noInline={true}
             >
@@ -909,17 +1050,24 @@ export function WorkbenchPage() {
               )}
 
               {canvasTab === "preview" ? (
-                <div className="h-full overflow-auto bg-white">
-                  <PreviewBoundary resetKey={activeVersionId ?? "empty"}>
-                    <LivePreview className="min-h-full" />
-                  </PreviewBoundary>
-                  {/* Compilation error overlay (syntax errors caught by react-live) */}
-                  <LiveError className="absolute inset-0 z-10 flex items-center justify-center bg-gray-50/95 p-8 text-sm text-red-600 font-mono" />
+                <div className="h-full overflow-auto bg-gray-50 relative">
+                  <div className="min-h-full w-full">
+                    <PreviewBoundary resetKey={activeVersionId ?? "empty"}>
+                      <LivePreview />
+                    </PreviewBoundary>
+                  </div>
+                  {/* Friendly compile-error overlay — replaces raw red SyntaxError dump */}
+                  <CustomLiveError />
                 </div>
               ) : (
                 <div className="h-full overflow-auto bg-[#011428]">
-                  <pre className="px-6 py-6 text-xs text-green-300/70 font-mono leading-relaxed whitespace-pre-wrap">
-                    {currentCode}
+                  <div className="px-4 pt-3 pb-1">
+                    <span className="inline-block rounded-full bg-amber-500/20 border border-amber-500/30 px-2.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-400">
+                      Sanitized — what goes to Babel
+                    </span>
+                  </div>
+                  <pre className="px-6 py-4 text-xs text-green-300/70 font-mono leading-relaxed whitespace-pre-wrap">
+                    {sanitizedCode}
                   </pre>
                   {currentSchema && (
                     <div className="px-6 pb-8 border-t border-white/10 pt-4">
