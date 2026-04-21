@@ -1,22 +1,28 @@
 /**
  * WorkbenchPage — The BOPOS Code Studio
  * 3-pane layout: Version History | The Architect (AI chat) | Live Canvas
+ * Preview engine: react-live (same-page, no iframe, Tailwind native)
  */
-import { useState, useRef, useEffect, useCallback } from "react"
+import {
+  useState, useRef, useEffect, useCallback,
+  useMemo, useReducer, Component,
+} from "react"
+import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import {
   Hammer, Clock, Send, Loader2, AlertCircle,
   Code2, Eye, Rocket, Save, CheckCircle2, X,
-  Terminal, ChevronLeft,
+  Terminal, ChevronLeft, Cloud,
 } from "lucide-react"
+import { LiveProvider, LivePreview, LiveError } from "react-live"
 import { cn } from "@/lib/utils"
 import { useProfile } from "@/context/ProfileContext"
 
 // ─────────────────────────────────────────────
 // STORAGE KEYS
 // ─────────────────────────────────────────────
-const VERSIONS_KEY  = "bopos_workbench_versions"
-const DEPLOYED_KEY  = "bopos_workbench_deployed"
+const VERSIONS_KEY = "bopos_workbench_versions"
+const DEPLOYED_KEY = "bopos_workbench_deployed"
 
 // ─────────────────────────────────────────────
 // TYPES
@@ -57,9 +63,10 @@ You design and build custom tools, dashboards, calculators, trackers, and intera
 ## Technical Protocol
 
 ### Code Output
-- Use React + Tailwind CSS exclusively (available globally via CDN — no imports needed)
+- Use React + Tailwind CSS exclusively. Tailwind works natively — all classes render instantly.
 - Every tool must be standalone and self-contained — no import/export syntax, no external dependencies
 - Define your component as: function App() { ... } — the preview engine mounts it automatically
+- React hooks (useState, useEffect, useCallback, useRef, useMemo, useReducer) are all available directly in scope — use them without React. prefix
 - Wrap ALL code in <WORKBENCH_CODE> and </WORKBENCH_CODE> tags
 
 ### Metadata Block (required at top of every component)
@@ -88,10 +95,9 @@ Rules:
 
 SyncIndicator (REQUIRED in every tool — place at root of App return):
   <SyncIndicator status={syncStatus} />
-It renders fixed in the bottom-right corner and shows saving/saved state. Never omit it.
+It renders fixed in the bottom-right corner. Never omit it.
 
 ### Schema Block (output AFTER the WORKBENCH_CODE block)
-For every tool with persistent data, output:
 <BOP_SCHEMA>
 {
   "toolId": "tool-id-matching-metadata",
@@ -156,153 +162,117 @@ function stripAllTags(text: string): string {
     .trim()
 }
 
-// ─────────────────────────────────────────────
-// BOP STORE — injected into every sandbox iframe
-// useBOPStore(toolId, initialData) and SyncIndicator
-// communicate with the parent via postMessage for localStorage persistence.
-// ─────────────────────────────────────────────
-const BOP_STORE_SCRIPT = `
-(function() {
-  var _listeners = {};
-  window.addEventListener('message', function(e) {
-    if (!e.data || e.data.type !== 'BOP_STORE_DATA') return;
-    var cb = _listeners[e.data.toolId];
-    if (cb) { cb(e.data.data); delete _listeners[e.data.toolId]; }
-  });
-
-  window.useBOPStore = function(toolId, initialData) {
-    var R = window.React;
-    var s1 = R.useState(initialData); var data = s1[0]; var _setD = s1[1];
-    var s2 = R.useState('idle');       var sync = s2[0]; var _setSy = s2[1];
-    var debRef  = R.useRef(null);
-    var loadRef = R.useRef(false);
-    var dataRef = R.useRef(initialData);
-
-    R.useEffect(function() { dataRef.current = data; }, [data]);
-
-    R.useEffect(function() {
-      if (loadRef.current) return;
-      _listeners[toolId] = function(stored) {
-        if (stored !== null && stored !== undefined) _setD(stored);
-        loadRef.current = true;
-      };
-      try { window.parent.postMessage({ type: 'BOP_STORE_GET', toolId: toolId }, '*'); } catch(e2){}
-      setTimeout(function() {
-        if (!loadRef.current) { loadRef.current = true; delete _listeners[toolId]; }
-      }, 1200);
-    }, []);
-
-    var setData = R.useCallback(function(updater) {
-      _setD(function(prev) {
-        var next = typeof updater === 'function' ? updater(prev) : updater;
-        dataRef.current = next;
-        return next;
-      });
-      _setSy('saving');
-      if (debRef.current) clearTimeout(debRef.current);
-      debRef.current = setTimeout(function() {
-        try { window.parent.postMessage({ type: 'BOP_STORE_SAVE', toolId: toolId, data: dataRef.current }, '*'); } catch(e2){}
-        _setSy('saved');
-        debRef.current = setTimeout(function() { _setSy('idle'); }, 2500);
-      }, 2000);
-    }, [toolId]);
-
-    return [data, setData, sync];
-  };
-
-  window.SyncIndicator = function(props) {
-    var R = window.React;
-    var status = props.status;
-    if (!status || status === 'idle') return null;
-    var isSaving = status === 'saving';
-    var color = isSaving ? '#F59E0B' : '#10B981';
-    return R.createElement('div', {
-      style: {
-        position:'fixed', bottom:14, right:14, display:'flex', alignItems:'center',
-        gap:6, background:'white', border:'1px solid #E5E7EB', borderRadius:20,
-        padding:'5px 12px 5px 9px', fontSize:11, fontWeight:600, color:color,
-        boxShadow:'0 1px 4px rgba(0,0,0,0.12)', zIndex:9999
-      }
-    },
-      R.createElement('svg', {
-        width:13, height:13, viewBox:'0 0 24 24', fill:'none', stroke:color, strokeWidth:2,
-        style:{ display:'block', animation: isSaving ? 'bop-spin 1s linear infinite' : 'none' }
-      },
-        R.createElement('path', { d:'M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z' })
-      ),
-      R.createElement('span', null, isSaving ? 'Saving...' : 'Saved to BOP')
-    );
-  };
-})();
-`
+// Append render(<App />) if not already present — required for react-live noInline mode
+function prepareCode(raw: string): string {
+  const t = raw.trimEnd()
+  return /\brender\s*\(/.test(t) ? t : t + "\nrender(<App />)"
+}
 
 // ─────────────────────────────────────────────
-// PREVIEW HTML BUILDER
+// BOP STORE — real React hook (no iframe/postMessage)
+// Persists to localStorage with 2-second debounce.
 // ─────────────────────────────────────────────
-const ERROR_HTML = (msg: string) =>
-  `<div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:40px;text-align:center;font-family:system-ui">
-    <div style="font-size:32px">⚙️</div>
-    <p style="font-weight:600;color:#374151;margin:0;font-size:14px">Drafting in progress...</p>
-    <p style="font-size:11px;color:#9ca3af;margin:0;max-width:300px">${msg.replace(/</g, "&lt;")}</p>
-  </div>`
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function useBOPStoreImpl(toolId: string, initialData: any): [any, (u: any) => void, "idle" | "saving" | "saved"] {
+  const storageKey = `bopos_tool_data_${toolId}`
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [data, setDataState] = useState<any>(() => {
+    try {
+      const stored = localStorage.getItem(storageKey)
+      return stored ? JSON.parse(stored) : initialData
+    } catch { return initialData }
+  })
+  const [syncStatus, setSyncStatus] = useState<"idle" | "saving" | "saved">("idle")
+  const debRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dataRef = useRef<any>(initialData)
 
-function buildPreviewHTML(code: string): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://cdn.tailwindcss.com"></script>
-<style>
-  html,body{margin:0;padding:0;height:100%;font-family:system-ui,-apple-system,sans-serif}
-  *{box-sizing:border-box}
-  @keyframes bop-spin{to{transform:rotate(360deg)}}
-  #bop-loader{display:flex;align-items:center;justify-content:center;height:100vh}
-  #bop-loader svg{animation:bop-spin 1s linear infinite}
-  #root{display:none}
-</style>
-</head>
-<body>
-<div id="bop-loader">
-  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="12" cy="12" r="10" stroke="#002855" stroke-width="2" stroke-opacity="0.15"/>
-    <path d="M12 2a10 10 0 0 1 10 10" stroke="#002855" stroke-width="2" stroke-linecap="round"/>
-  </svg>
-</div>
-<div id="root"></div>
-<script>${BOP_STORE_SCRIPT}</script>
-<script>
-window.addEventListener('error', function(e) {
-  var loader = document.getElementById('bop-loader');
-  if (loader) loader.innerHTML = ${JSON.stringify(ERROR_HTML("Runtime error — reviewing generated code"))};
-  var root = document.getElementById('root');
-  if (root) root.style.display = 'none';
-  try { window.parent.postMessage({ type: 'PREVIEW_ERROR', message: e.message }, '*'); } catch(_){}
-});
-</script>
-<script type="text/babel">
-(function() {
-  try {
-    ${code}
-    var loader = document.getElementById('bop-loader');
-    if (loader) loader.style.display = 'none';
-    var container = document.getElementById('root');
-    container.style.display = '';
-    var root = ReactDOM.createRoot(container);
-    root.render(React.createElement(App));
-    try { window.parent.postMessage({ type: 'PREVIEW_READY' }, '*'); } catch(_){}
-  } catch(e) {
-    var loader = document.getElementById('bop-loader');
-    if (loader) loader.innerHTML = ${JSON.stringify(ERROR_HTML("__MSG__"))}.replace('__MSG__', e.message || 'Syntax error in generated code');
-    try { window.parent.postMessage({ type: 'PREVIEW_ERROR', message: e.message }, '*'); } catch(_){}
+  useEffect(() => { dataRef.current = data }, [data])
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const setData = useCallback((updater: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setDataState((prev: any) => {
+      const next = typeof updater === "function" ? updater(prev) : updater
+      dataRef.current = next
+      return next
+    })
+    setSyncStatus("saving")
+    if (debRef.current) clearTimeout(debRef.current)
+    debRef.current = setTimeout(() => {
+      localStorage.setItem(storageKey, JSON.stringify(dataRef.current))
+      setSyncStatus("saved")
+      debRef.current = setTimeout(() => setSyncStatus("idle"), 2500)
+    }, 2000)
+  }, [storageKey])
+
+  return [data, setData, syncStatus]
+}
+
+// ─────────────────────────────────────────────
+// SYNC INDICATOR — real React component for react-live scope
+// ─────────────────────────────────────────────
+function SyncIndicatorImpl({ status }: { status: "idle" | "saving" | "saved" }) {
+  if (status === "idle") return null
+  const isSaving = status === "saving"
+  const color    = isSaving ? "#F59E0B" : "#10B981"
+  return (
+    <div style={{
+      position: "fixed", bottom: 14, right: 14,
+      display: "flex", alignItems: "center", gap: 6,
+      background: "white", border: "1px solid #E5E7EB", borderRadius: 20,
+      padding: "5px 12px 5px 9px", fontSize: 11, fontWeight: 600, color,
+      boxShadow: "0 1px 4px rgba(0,0,0,0.12)", zIndex: 9999,
+    }}>
+      <svg width={13} height={13} viewBox="0 0 24 24" fill="none"
+        stroke={color} strokeWidth={2}
+        style={{ display: "block", animation: isSaving ? "spin 1s linear infinite" : "none" }}
+      >
+        <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
+      </svg>
+      <span>{isSaving ? "Saving..." : "Saved to BOP"}</span>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+// SANDBOX SCOPE — passed to every LiveProvider
+// Provides React hooks + BOP utilities to AI-generated code.
+// ─────────────────────────────────────────────
+const SANDBOX_SCOPE = {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+  useReducer,
+  useBOPStore:    useBOPStoreImpl,
+  SyncIndicator:  SyncIndicatorImpl,
+}
+
+// ─────────────────────────────────────────────
+// PREVIEW ERROR BOUNDARY — catches runtime errors in LivePreview
+// ─────────────────────────────────────────────
+class PreviewBoundary extends Component<
+  { children: ReactNode; resetKey: string },
+  { error: string | null }
+> {
+  state = { error: null as string | null }
+
+  static getDerivedStateFromError(e: Error) { return { error: e.message } }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-3 p-10 text-center bg-gray-50">
+          <span className="text-3xl">⚙️</span>
+          <p className="text-sm font-semibold text-gray-700">Drafting in progress...</p>
+          <p className="text-xs text-gray-400 max-w-xs leading-relaxed">{this.state.error}</p>
+        </div>
+      )
+    }
+    return this.props.children
   }
-})();
-</script>
-</body>
-</html>`
 }
 
 // ─────────────────────────────────────────────
@@ -329,9 +299,9 @@ async function callWorkbenchClaude(messages: ChatMessage[], systemPrompt: string
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
-      "Content-Type":                          "application/json",
-      "x-api-key":                             apiKey,
-      "anthropic-version":                     "2023-06-01",
+      "Content-Type":                              "application/json",
+      "x-api-key":                                 apiKey,
+      "anthropic-version":                         "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify({
@@ -367,7 +337,6 @@ function VersionPanel({
 
   return (
     <div className="w-52 flex flex-col h-full bg-[#001022] border-r border-white/10 shrink-0">
-      {/* Back link */}
       <div className="px-3 pt-3 pb-2 shrink-0">
         <Link
           to="/home"
@@ -378,7 +347,6 @@ function VersionPanel({
         </Link>
       </div>
 
-      {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2.5 border-y border-white/10 shrink-0">
         <Clock className="h-3 w-3 text-white/30 shrink-0" />
         <span className="text-[10px] font-semibold uppercase tracking-widest text-white/30">
@@ -386,7 +354,6 @@ function VersionPanel({
         </span>
       </div>
 
-      {/* List */}
       <div className="flex-1 overflow-y-auto py-2">
         {sorted.length === 0 ? (
           <p className="px-4 pt-4 text-[11px] text-white/20 leading-relaxed text-center">
@@ -582,73 +549,22 @@ export function WorkbenchPage() {
   const firstName    = profile.ownerFirstName || profile.ownerName?.split(" ")[0] || "Builder"
   const businessName = profile.businessName   || "your business"
 
-  const [versions,        setVersions]        = useState<WorkbenchVersion[]>(loadVersions)
+  const [versions,        setVersions]      = useState<WorkbenchVersion[]>(loadVersions)
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null)
-  const [currentCode,     setCurrentCode]     = useState("")
-  const [canvasTab,       setCanvasTab]        = useState<"preview" | "code">("preview")
-  const [messages,        setMessages]         = useState<ChatMessage[]>([])
-  const [input,           setInput]            = useState("")
-  const [isLoading,       setIsLoading]        = useState(false)
-  const [isRendering,     setIsRendering]      = useState(false)
-  const [previewError,    setPreviewError]     = useState<string | null>(null)
-  const [error,           setError]            = useState<string | null>(null)
-  const [previewUrl,      setPreviewUrl]        = useState<string | null>(null)
-  const [deploy,          setDeploy]           = useState<DeployState>({
+  const [currentCode,     setCurrentCode]   = useState("")
+  const [currentSchema,   setCurrentSchema] = useState<Record<string, unknown> | null>(null)
+  const [canvasTab,       setCanvasTab]     = useState<"preview" | "code">("preview")
+  const [messages,        setMessages]      = useState<ChatMessage[]>([])
+  const [input,           setInput]         = useState("")
+  const [isLoading,       setIsLoading]     = useState(false)
+  const [error,           setError]         = useState<string | null>(null)
+  const [deploy,          setDeploy]        = useState<DeployState>({
     open: false, step: "form", name: "", dashboard: "os",
   })
 
-  const [currentSchema,   setCurrentSchema]   = useState<Record<string, unknown> | null>(null)
-
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef       = useRef<HTMLTextAreaElement>(null)
-  const prevBlobRef    = useRef<string | null>(null)
-  const iframeRef      = useRef<HTMLIFrameElement>(null)
-
-  const hasApiKey = !!import.meta.env.VITE_ANTHROPIC_API_KEY
-
-  // Rebuild blob URL whenever code changes; start rendering spinner
-  useEffect(() => {
-    if (prevBlobRef.current) URL.revokeObjectURL(prevBlobRef.current)
-    if (!currentCode) { setPreviewUrl(null); setIsRendering(false); setPreviewError(null); return }
-    setIsRendering(true)
-    setPreviewError(null)
-    const blob = new Blob([buildPreviewHTML(currentCode)], { type: "text/html" })
-    const url  = URL.createObjectURL(blob)
-    prevBlobRef.current = url
-    setPreviewUrl(url)
-  }, [currentCode])
-
-  // Unified iframe message router: preview lifecycle + BOP persistent store
-  useEffect(() => {
-    function onMessage(e: MessageEvent) {
-      const msg = e.data as { type?: string; toolId?: string; data?: unknown; message?: string }
-      if (!msg?.type) return
-
-      if (msg.type === "PREVIEW_READY") {
-        setIsRendering(false)
-        setPreviewError(null)
-      } else if (msg.type === "PREVIEW_ERROR") {
-        setIsRendering(false)
-        setPreviewError(msg.message ?? "Unknown error")
-      } else if (msg.type === "BOP_STORE_GET" && msg.toolId) {
-        const stored = localStorage.getItem(`bopos_tool_data_${msg.toolId}`)
-        const data   = stored ? JSON.parse(stored) : null
-        iframeRef.current?.contentWindow?.postMessage(
-          { type: "BOP_STORE_DATA", toolId: msg.toolId, data },
-          "*"
-        )
-      } else if (msg.type === "BOP_STORE_SAVE" && msg.toolId) {
-        localStorage.setItem(`bopos_tool_data_${msg.toolId}`, JSON.stringify(msg.data))
-      }
-    }
-    window.addEventListener("message", onMessage)
-    return () => window.removeEventListener("message", onMessage)
-  }, [])
-
-  // Cleanup on unmount
-  useEffect(() => () => {
-    if (prevBlobRef.current) URL.revokeObjectURL(prevBlobRef.current)
-  }, [])
+  const hasApiKey      = !!import.meta.env.VITE_ANTHROPIC_API_KEY
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -696,9 +612,9 @@ export function WorkbenchPage() {
     try {
       const systemPrompt = getSystemPrompt(firstName, businessName)
       const rawReply     = await callWorkbenchClaude([...messages, userMsg], systemPrompt)
-      const code    = extractCode(rawReply)
-      const schema  = extractSchema(rawReply)
-      const display = stripAllTags(rawReply)
+      const code         = extractCode(rawReply)
+      const schema       = extractSchema(rawReply)
+      const display      = stripAllTags(rawReply)
 
       const assistantMsg: ChatMessage = {
         id:             crypto.randomUUID(),
@@ -758,17 +674,16 @@ export function WorkbenchPage() {
   return (
     <div className="flex h-screen overflow-hidden bg-[#001022]">
 
-      {/* ── Pane 1: Version History ─────────────────── */}
+      {/* ── Pane 1: Version History ─────────────────────── */}
       <VersionPanel
         versions={versions}
         activeVersionId={activeVersionId}
         onSelect={handleVersionSelect}
       />
 
-      {/* ── Pane 2: The Architect ───────────────────── */}
+      {/* ── Pane 2: The Architect ───────────────────────── */}
       <div className="w-[360px] flex flex-col h-full bg-[#011428] border-r border-white/10 shrink-0">
 
-        {/* Header */}
         <div className="flex items-center gap-2 px-4 py-3 bg-[#001022] border-b border-white/10 shrink-0">
           <Terminal className="h-3.5 w-3.5 text-green-400 shrink-0" />
           <span className="text-[11px] font-mono text-green-400 tracking-wide">
@@ -776,7 +691,6 @@ export function WorkbenchPage() {
           </span>
         </div>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-3">
           {messages.length === 0 && (
             <div className="flex flex-col gap-4 pt-2">
@@ -843,7 +757,6 @@ export function WorkbenchPage() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
         {hasApiKey ? (
           <div className="border-t border-white/10 bg-[#001022] px-3 py-3 shrink-0">
             <div className="flex items-end gap-2">
@@ -889,36 +802,47 @@ export function WorkbenchPage() {
         )}
       </div>
 
-      {/* ── Pane 3: Canvas ──────────────────────────── */}
+      {/* ── Pane 3: Canvas ──────────────────────────────── */}
       <div className="flex-1 flex flex-col min-w-0 relative">
 
         {/* Toolbar */}
         <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-gray-200 shrink-0">
-          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-            <button
-              onClick={() => setCanvasTab("preview")}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-                canvasTab === "preview"
-                  ? "bg-white text-gray-800 shadow-sm"
-                  : "text-gray-500 hover:text-gray-700"
-              )}
-            >
-              <Eye className="h-3 w-3" />
-              Preview
-            </button>
-            <button
-              onClick={() => setCanvasTab("code")}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-                canvasTab === "code"
-                  ? "bg-white text-gray-800 shadow-sm"
-                  : "text-gray-500 hover:text-gray-700"
-              )}
-            >
-              <Code2 className="h-3 w-3" />
-              Code
-            </button>
+          <div className="flex items-center gap-3">
+            {/* Tab switcher */}
+            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setCanvasTab("preview")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+                  canvasTab === "preview"
+                    ? "bg-white text-gray-800 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                )}
+              >
+                <Eye className="h-3 w-3" />
+                Preview
+              </button>
+              <button
+                onClick={() => setCanvasTab("code")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
+                  canvasTab === "code"
+                    ? "bg-white text-gray-800 shadow-sm"
+                    : "text-gray-500 hover:text-gray-700"
+                )}
+              >
+                <Code2 className="h-3 w-3" />
+                Code
+              </button>
+            </div>
+
+            {/* Data Sync Ready indicator */}
+            {currentCode && (
+              <div className="flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1">
+                <Cloud className="h-3 w-3 text-emerald-500" />
+                <span className="text-[10px] font-semibold text-emerald-600">Data Sync Ready</span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -946,6 +870,7 @@ export function WorkbenchPage() {
         {/* Content area */}
         <div className="flex-1 overflow-hidden relative">
           {!currentCode ? (
+            // ── Empty state ──────────────────────────────
             <div className="flex h-full items-center justify-center bg-[#F0F2F5]">
               <div className="flex flex-col items-center gap-6 text-center max-w-md px-10">
                 <Hammer className="h-10 w-10 text-[#002855]/15" />
@@ -956,7 +881,10 @@ export function WorkbenchPage() {
                   >
                     Welcome to the BOP Workbench.
                   </p>
-                  <p className="text-xl text-[#002855]/55 font-light" style={{ fontFamily: "'Playfair Display', serif" }}>
+                  <p
+                    className="text-xl text-[#002855]/55 font-light"
+                    style={{ fontFamily: "'Playfair Display', serif" }}
+                  >
                     What are we building today, {firstName}?
                   </p>
                 </div>
@@ -965,41 +893,47 @@ export function WorkbenchPage() {
                 </p>
               </div>
             </div>
-          ) : canvasTab === "preview" ? (
-            <div className="relative h-full w-full">
-              {/* Spinner overlay — shown while CDN scripts boot + React mounts */}
-              {isRendering && (
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#F0F2F5]">
-                  <Loader2 className="h-7 w-7 animate-spin text-[#002855]/30" />
-                  <p className="text-xs text-gray-400">Loading preview...</p>
-                </div>
-              )}
-              <iframe
-                ref={iframeRef}
-                key={previewUrl}
-                src={previewUrl ?? undefined}
-                className="w-full h-full border-0 bg-white"
-                title="Tool Preview"
-                sandbox="allow-scripts"
-                onLoad={() => setIsRendering(false)}
-              />
-            </div>
           ) : (
-            <div className="h-full overflow-auto bg-[#011428]">
-              <pre className="px-6 py-6 text-xs text-green-300/70 font-mono leading-relaxed whitespace-pre-wrap">
-                {currentCode}
-              </pre>
-              {currentSchema && (
-                <div className="px-6 pb-8 border-t border-white/10 pt-4">
-                  <p className="text-[10px] font-semibold uppercase tracking-widest text-white/25 mb-2">
-                    BOP Schema
-                  </p>
-                  <pre className="text-[11px] text-amber-300/60 font-mono leading-relaxed whitespace-pre-wrap">
-                    {JSON.stringify(currentSchema, null, 2)}
-                  </pre>
+            // ── Live Canvas ──────────────────────────────
+            <LiveProvider
+              code={prepareCode(currentCode)}
+              scope={SANDBOX_SCOPE}
+              noInline={true}
+            >
+              {/* AI generating overlay */}
+              {isLoading && (
+                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-white/80 backdrop-blur-sm">
+                  <Loader2 className="h-7 w-7 animate-spin text-[#002855]/40" />
+                  <p className="text-xs text-gray-400">Building your tool...</p>
                 </div>
               )}
-            </div>
+
+              {canvasTab === "preview" ? (
+                <div className="h-full overflow-auto bg-white">
+                  <PreviewBoundary resetKey={activeVersionId ?? "empty"}>
+                    <LivePreview className="min-h-full" />
+                  </PreviewBoundary>
+                  {/* Compilation error overlay (syntax errors caught by react-live) */}
+                  <LiveError className="absolute inset-0 z-10 flex items-center justify-center bg-gray-50/95 p-8 text-sm text-red-600 font-mono" />
+                </div>
+              ) : (
+                <div className="h-full overflow-auto bg-[#011428]">
+                  <pre className="px-6 py-6 text-xs text-green-300/70 font-mono leading-relaxed whitespace-pre-wrap">
+                    {currentCode}
+                  </pre>
+                  {currentSchema && (
+                    <div className="px-6 pb-8 border-t border-white/10 pt-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-widest text-white/25 mb-2">
+                        BOP Schema
+                      </p>
+                      <pre className="text-[11px] text-amber-300/60 font-mono leading-relaxed whitespace-pre-wrap">
+                        {JSON.stringify(currentSchema, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+            </LiveProvider>
           )}
         </div>
 
