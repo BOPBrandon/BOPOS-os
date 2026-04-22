@@ -1,33 +1,17 @@
 /**
  * WorkbenchPage — The BOPOS Code Studio
  * 3-pane layout: Version History | The Architect (AI chat) | Live Canvas
- * Preview engine: react-live (same-page, no iframe, Tailwind native)
+ * Preview engine: sandboxed iframe with blob: URL — crashes stay inside the frame
  */
 import {
-  useState, useRef, useEffect, useCallback,
-  useMemo, useReducer, Component,
+  useState, useRef, useEffect, useCallback, useMemo,
 } from "react"
-import type { ReactNode } from "react"
-import { Link } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import {
   Hammer, Clock, Send, Loader2, AlertCircle,
   Code2, Eye, Rocket, Save, CheckCircle2, X,
-  Terminal, ChevronLeft, Cloud, RefreshCw,
+  Terminal, ChevronLeft, Cloud, RefreshCw, RotateCcw,
 } from "lucide-react"
-// Extra icons injected into the sandbox so AI-generated tools can use them without imports
-import {
-  ChevronDown, ChevronUp, ChevronRight,
-  ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
-  Plus, Minus, Check, Edit3, Trash2, Copy, Download,
-  Search, Filter, SlidersHorizontal,
-  DollarSign, TrendingUp, TrendingDown, BarChart2, BarChart3,
-  PieChart, LineChart, Percent, Calculator,
-  Users, User, Building2, Briefcase, Target, Award, Star,
-  Calendar, Bell, Timer,
-  AlertTriangle, Info, CheckCircle, Circle, XCircle,
-  List, ListChecks, ClipboardList, Layers, EyeOff, ExternalLink,
-} from "lucide-react"
-import { LiveProvider, LivePreview, useLiveContext } from "react-live"
 import { cn } from "@/lib/utils"
 import { useProfile } from "@/context/ProfileContext"
 
@@ -136,8 +120,11 @@ dashboard field meaning:
 
 For refinements: one sentence, then FULL updated component + updated schema if fields changed.
 
+## STRICT OUTPUT RULE (highest priority)
+Only output the functional React component inside the WORKBENCH_CODE tags. No introductory text. No explanations before or after the code block. Zero freeform prose outside the tags. The code block is the entire response.
+
 ## Tone
-Confident, decisive, builder-mindset. Brief description then straight to code.`
+Confident, decisive, builder-mindset. One-sentence description inside the code as a comment, then the component.`
 
 function getSystemPrompt(firstName: string, businessName: string): string {
   return `${WORKBENCH_BRAIN}
@@ -190,13 +177,7 @@ function stripAllTags(text: string): string {
     .trim()
 }
 
-// Append render(<App />) if not already present — required for react-live noInline mode
-function prepareCode(raw: string): string {
-  const t = raw.trimEnd()
-  return /\brender\s*\(/.test(t) ? t : t + "\nrender(<App />)"
-}
-
-// Strip everything that would crash the Babel transform inside react-live:
+// Strip everything that would crash Babel standalone inside the iframe:
 // ES module imports, export keywords, and stray wrapper tags.
 function sanitizeCode(raw: string): string {
   const lines = raw.split("\n")
@@ -227,6 +208,10 @@ function sanitizeCode(raw: string): string {
     // Drop stray WORKBENCH_CODE XML tags
     if (t === "<WORKBENCH_CODE>" || t === "</WORKBENCH_CODE>") continue
 
+    // Strip pure comment lines (// TOOL METADATA, // name:, // dashboard:, etc.)
+    // Inline comments like `const x = 1; // note` are kept because t doesn't start with //
+    if (t.startsWith("//")) continue
+
     out.push(stripped)
   }
 
@@ -238,138 +223,178 @@ function sanitizeCode(raw: string): string {
 }
 
 // ─────────────────────────────────────────────
-// BOP STORE — real React hook (no iframe/postMessage)
-// Persists to localStorage with 2-second debounce.
+// IFRAME HTML TEMPLATE
+//
+// The AI code sits in a <script type="text/babel"> tag — no JSON.parse, no eval.
+// The boot script runs first, defines showError + loadScript, then fires a sequential
+// CDN chain. By the time Babel loads and processes the text/babel tag, all globals
+// (React hooks, Lucide icons, useBOPStore) are already on window.
+//
+// </script> in AI code is escaped to <\/script> (one backslash). The HTML5 tokenizer
+// requires the tag name after </ to start with an ASCII letter, so <\/ is treated as
+// raw text and never closes the script element.
 // ─────────────────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function useBOPStoreImpl(toolId: string, initialData: any): [any, (u: any) => void, "idle" | "saving" | "saved"] {
-  const storageKey = `bopos_tool_data_${toolId}`
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [data, setDataState] = useState<any>(() => {
-    try {
-      const stored = localStorage.getItem(storageKey)
-      return stored ? JSON.parse(stored) : initialData
-    } catch { return initialData }
-  })
-  const [syncStatus, setSyncStatus] = useState<"idle" | "saving" | "saved">("idle")
-  const debRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const dataRef = useRef<any>(initialData)
-
-  useEffect(() => { dataRef.current = data }, [data])
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const setData = useCallback((updater: any) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    setDataState((prev: any) => {
-      const next = typeof updater === "function" ? updater(prev) : updater
-      dataRef.current = next
-      return next
-    })
-    setSyncStatus("saving")
-    if (debRef.current) clearTimeout(debRef.current)
-    debRef.current = setTimeout(() => {
-      localStorage.setItem(storageKey, JSON.stringify(dataRef.current))
-      setSyncStatus("saved")
-      debRef.current = setTimeout(() => setSyncStatus("idle"), 2500)
-    }, 2000)
-  }, [storageKey])
-
-  return [data, setData, syncStatus]
-}
+const IFRAME_ICON_NAMES = [
+  "DollarSign","TrendingUp","TrendingDown","BarChart2","BarChart3",
+  "PieChart","LineChart","Percent","Calculator",
+  "Users","User","Building2","Briefcase","Target","Award","Star",
+  "Calendar","Clock","Bell","Timer",
+  "AlertCircle","AlertTriangle","Info","CheckCircle","CheckCircle2",
+  "Circle","XCircle","Loader2","Plus","Minus","X","Check",
+  "Edit3","Trash2","Save","Copy","Download","Search","Filter",
+  "Settings","RefreshCw","Eye","EyeOff",
+  "ChevronDown","ChevronUp","ChevronLeft","ChevronRight",
+  "ArrowUp","ArrowDown","ArrowLeft","ArrowRight",
+  "List","ListChecks","ClipboardList","Layers","ExternalLink","SlidersHorizontal",
+]
 
 // ─────────────────────────────────────────────
-// SYNC INDICATOR — real React component for react-live scope
+// SELF-CONTAINED SANDBOX
+//
+// Architecture (pure postMessage):
+//  1. Blob HTML is STATIC — no AI code embedded. Parent sends code via postMessage.
+//  2. Loading animation is always visible until execCode fires and React mounts.
+//  3. CDN chain: React → ReactDOM → Lucide → Babel. Each retries via jsDelivr.
+//  4. After Babel loads, sandbox sends BOP_READY to parent, then flushes any code
+//     that arrived via postMessage before the chain completed.
+//  5. Parent sends code after BOP_READY, OR force-injects after 3s as a fallback.
+//  6. execCode: Babel.transform(raw) + eval — explicit, no auto-processing quirks.
+//  7. Tailwind play CDN loads non-blocking after render.
+//  8. useBOPStore namespaces all keys by userId — each user's data is private.
 // ─────────────────────────────────────────────
-function SyncIndicatorImpl({ status }: { status: "idle" | "saving" | "saved" }) {
-  if (status === "idle") return null
-  const isSaving = status === "saving"
-  const color    = isSaving ? "#F59E0B" : "#10B981"
-  return (
-    <div style={{
-      position: "fixed", bottom: 14, right: 14,
-      display: "flex", alignItems: "center", gap: 6,
-      background: "white", border: "1px solid #E5E7EB", borderRadius: 20,
-      padding: "5px 12px 5px 9px", fontSize: 11, fontWeight: 600, color,
-      boxShadow: "0 1px 4px rgba(0,0,0,0.12)", zIndex: 9999,
-    }}>
-      <svg width={13} height={13} viewBox="0 0 24 24" fill="none"
-        stroke={color} strokeWidth={2}
-        style={{ display: "block", animation: isSaving ? "spin 1s linear infinite" : "none" }}
-      >
-        <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
-      </svg>
-      <span>{isSaving ? "Saving..." : "Saved to BOP"}</span>
+function buildSandboxHTML(): string {
+  const iconList = JSON.stringify(IFRAME_ICON_NAMES)
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+body{margin:0;padding:0;font-family:system-ui,-apple-system,sans-serif;background:#f8fafc;}
+*,*::before,*::after{box-sizing:border-box;}
+#root{min-height:100vh;}
+#bop-init{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:14px;}
+.bop-dots{display:flex;gap:7px;}
+.bop-dot{width:9px;height:9px;border-radius:50%;background:#002855;animation:bop-pulse 1.1s ease-in-out infinite;}
+.bop-dot:nth-child(2){animation-delay:-.22s;}
+.bop-dot:nth-child(3){animation-delay:-.44s;}
+@keyframes bop-pulse{0%,80%,100%{transform:scale(0);opacity:.4}40%{transform:scale(1);opacity:1}}
+.bop-label{font-size:11px;color:#94a3b8;letter-spacing:.04em;}
+</style>
+</head>
+<body>
+<div id="root">
+  <div id="bop-init">
+    <div class="bop-dots">
+      <div class="bop-dot"></div><div class="bop-dot"></div><div class="bop-dot"></div>
     </div>
-  )
-}
-
-// ─────────────────────────────────────────────
-// SANDBOX SCOPE — passed to every LiveProvider
-// Provides React hooks + BOP utilities + Lucide icons to AI-generated code.
-// Injecting icons here means AI code never needs import statements.
-// ─────────────────────────────────────────────
-const SANDBOX_SCOPE = {
-  // React hooks
-  useState, useEffect, useCallback, useRef, useMemo, useReducer,
-  // BOP utilities
-  useBOPStore:   useBOPStoreImpl,
-  SyncIndicator: SyncIndicatorImpl,
-  // Lucide icons — available as <DollarSign />, <TrendingUp />, etc.
-  ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
-  ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
-  Plus, Minus, Check, Edit3, Trash2, Copy, Download,
-  Search, Filter, SlidersHorizontal,
-  DollarSign, TrendingUp, TrendingDown, BarChart2, BarChart3,
-  PieChart, LineChart, Percent, Calculator,
-  Users, User, Building2, Briefcase, Target, Award, Star,
-  Calendar, Clock, Bell, Timer,
-  AlertCircle, AlertTriangle, Info, CheckCircle, CheckCircle2, Circle, XCircle,
-  Loader2, Eye, EyeOff, Save, X, RefreshCw, ExternalLink,
-  List, ListChecks, ClipboardList, Layers,
-}
-
-// ─────────────────────────────────────────────
-// PREVIEW ERROR BOUNDARY — catches runtime errors in LivePreview
-// ─────────────────────────────────────────────
-class PreviewBoundary extends Component<
-  { children: ReactNode; resetKey: string },
-  { error: string | null }
-> {
-  state = { error: null as string | null }
-
-  static getDerivedStateFromError(e: Error) { return { error: e.message } }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <div className="flex h-full flex-col items-center justify-center gap-3 p-10 text-center bg-gray-50">
-          <span className="text-3xl">⚙️</span>
-          <p className="text-sm font-semibold text-gray-700">Drafting in progress...</p>
-          <p className="text-xs text-gray-400 max-w-xs leading-relaxed">{this.state.error}</p>
-        </div>
-      )
-    }
-    return this.props.children
+    <span class="bop-label">Loading BOPOS Workbench...</span>
+  </div>
+</div>
+<script>
+(function(){
+  function showError(t,d){
+    document.getElementById("root").innerHTML=
+      '<div style="color:#b91c1c;background:#fef2f2;border:1px solid #fca5a5;'+
+      'padding:20px;margin:20px;border-radius:8px;font-family:monospace;font-size:13px;white-space:pre-wrap">'+
+      '<b>'+t+'</b><br><br>'+(d||'')+'</div>';
   }
-}
+  window.onerror=function(m,_s,_l,_c,e){showError("Runtime Error",e?(e.stack||e.message):String(m));return true;};
+  window.onunhandledrejection=function(e){showError("Unhandled Promise",e.reason?String(e.reason.message||e.reason):"Unknown");};
 
-// ─────────────────────────────────────────────
-// CUSTOM LIVE ERROR — replaces red crash dump with a friendly message
-// Must be used inside <LiveProvider> (uses useLiveContext internally)
-// ─────────────────────────────────────────────
-function CustomLiveError() {
-  const { error } = useLiveContext()
-  if (!error) return null
-  return (
-    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-gray-50/96 p-10 text-center">
-      <span className="text-3xl">⚙️</span>
-      <p className="text-sm font-semibold text-gray-700">Polishing the code... one moment.</p>
-      <p className="text-[11px] text-gray-400 max-w-sm leading-relaxed font-mono opacity-80">
-        {error}
-      </p>
-    </div>
-  )
+  // Holds code that arrives before Babel is ready
+  var _pendingCode=null;
+
+  window.addEventListener("message",function(e){
+    if(typeof e.data!=="string")return;
+    if(typeof Babel!=="undefined"&&typeof React!=="undefined"){
+      execCode(e.data);
+    }else{
+      _pendingCode=e.data;
+    }
+  });
+
+  function execCode(raw){
+    var mt='\\ntry{ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));}catch(ex){showError("Mount Error",ex.stack||ex.message);}';
+    try{
+      var out=Babel.transform(raw+mt,{presets:["react"],filename:"tool.jsx"}).code;
+      eval(out);
+    }catch(e){showError("Code Error",e.stack||e.message);}
+  }
+
+  // CDN loader — tries unpkg first, auto-retries with jsDelivr on failure
+  function loadScript(path,cb){
+    var cdns=["https://unpkg.com/","https://cdn.jsdelivr.net/npm/"];
+    var idx=0;
+    function next(){
+      var s=document.createElement("script");
+      s.src=cdns[idx]+path;s.crossOrigin="anonymous";
+      s.onload=cb||function(){};
+      s.onerror=function(){
+        idx++;
+        if(idx<cdns.length){next();}
+        else{showError("CDN Load Failed","Could not load from any CDN:\\n"+path);}
+      };
+      document.head.appendChild(s);
+    }
+    next();
+  }
+
+  loadScript("react@18/umd/react.production.min.js",function(){
+    var _uid=(localStorage.getItem("bopos_token")||"anon").replace(/[^a-zA-Z0-9]/g,"_").slice(0,20);
+    window.useState=React.useState;window.useEffect=React.useEffect;
+    window.useCallback=React.useCallback;window.useRef=React.useRef;
+    window.useMemo=React.useMemo;window.useReducer=React.useReducer;
+
+    window.useBOPStore=function(k,i){
+      var _key=k+"_"+_uid;
+      var _init=i;
+      try{var _sv=localStorage.getItem(_key);if(_sv!==null)_init=JSON.parse(_sv);}catch(_x){}
+      var _st=React.useState(_init);
+      var _tr=React.useRef(null);
+      function _set(v){
+        var next=typeof v==="function"?v(_st[0]):v;
+        _st[1](next);
+        clearTimeout(_tr.current);
+        _tr.current=setTimeout(function(){
+          try{localStorage.setItem(_key,JSON.stringify(next));}catch(_x){}
+        },2000);
+      }
+      return[_st[0],_set,"idle"];
+    };
+    window.SyncIndicator=function(){return null;};
+
+    loadScript("react-dom@18/umd/react-dom.production.min.js",function(){
+      loadScript("lucide@0.294.0/dist/umd/lucide.js",function(){
+        var _lc=typeof lucide!=="undefined"?lucide:{};
+        ${iconList}.forEach(function(n){window[n]=_lc[n];});
+
+        loadScript("@babel/standalone/babel.min.js",function(){
+          // Signal parent — sandbox is fully primed and ready for code
+          try{window.parent.postMessage({type:"BOP_READY"},"*");}catch(_){}
+
+          // Flush any code that arrived before Babel finished loading
+          if(_pendingCode){execCode(_pendingCode);_pendingCode=null;}
+
+          // Tailwind play CDN — non-blocking; styles via MutationObserver after render
+          var _tw=document.createElement("script");
+          _tw.src="https://cdn.tailwindcss.com";
+          _tw.crossOrigin="anonymous";
+          _tw.onerror=function(){
+            var fb=document.createElement("style");
+            fb.textContent="body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:8px;}*{box-sizing:border-box;}";
+            document.head.appendChild(fb);
+          };
+          document.head.appendChild(_tw);
+        });
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>`
 }
 
 // ─────────────────────────────────────────────
@@ -643,6 +668,7 @@ const STARTER_PROMPTS = [
 // ─────────────────────────────────────────────
 export function WorkbenchPage() {
   const { profile } = useProfile()
+  const navigate     = useNavigate()
   const firstName    = profile.ownerFirstName || profile.ownerName?.split(" ")[0] || "Builder"
   const businessName = profile.businessName   || "your business"
 
@@ -662,11 +688,76 @@ export function WorkbenchPage() {
     open: false, step: "form", name: "", dashboard: "os",
   })
 
+  const [toast, setToast] = useState<{ message: string; dashboard: "os" | "mpr" | "anchor" } | null>(null)
+
+  // Show deploy success toast for 4 seconds
+  useEffect(() => {
+    if (deploy.step !== "success") return
+    const dashLabel = deploy.dashboard === "os" ? "OS" : deploy.dashboard === "mpr" ? "MPR" : "Anchor"
+    setToast({ message: `"${deploy.name}" deployed privately to your ${dashLabel}.`, dashboard: deploy.dashboard })
+    const t = setTimeout(() => setToast(null), 4000)
+    return () => clearTimeout(t)
+  }, [deploy.step, deploy.name, deploy.dashboard])
+
+  // ── Iframe sandbox state ─────────────────────
+  const iframeRef        = useRef<HTMLIFrameElement>(null)
+  const blobUrlRef       = useRef<string | null>(null)
+  const sandboxReadyRef  = useRef(false)
+  const pendingCodeRef   = useRef<string>("")   // code waiting to be sent after BOP_READY
+  const [iframeKey,     setIframeKey]     = useState(0)
+  const [iframeLoading, setIframeLoading] = useState(false)
+
   const messagesEndRef  = useRef<HTMLDivElement>(null)
   const inputRef        = useRef<HTMLTextAreaElement>(null)
   const hasApiKey       = !!import.meta.env.VITE_ANTHROPIC_API_KEY
   // Tracks which message id we last extracted code from — prevents double-processing
   const lastExtractedId = useRef<string | null>(null)
+
+  // Rebuild blob URL whenever sanitizedCode changes — revoke old URL to avoid leaks.
+  // Code is NOT embedded in the blob; it's stored in pendingCodeRef and sent via
+  // postMessage after BOP_READY (or force-injected after 3 seconds).
+  useEffect(() => {
+    if (!sanitizedCode) {
+      if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null }
+      pendingCodeRef.current = ""
+      return
+    }
+    pendingCodeRef.current = sanitizedCode
+    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current)
+    const html = buildSandboxHTML()
+    blobUrlRef.current = URL.createObjectURL(new Blob([html], { type: "text/html" }))
+    sandboxReadyRef.current = false
+    setIframeKey((k) => k + 1)
+    setIframeLoading(true)
+  }, [sanitizedCode])
+
+  // BOP_READY: sandbox finished loading CDNs — send the pending code now
+  useEffect(() => {
+    function onMsg(e: MessageEvent) {
+      if (e.data?.type === "BOP_READY") {
+        sandboxReadyRef.current = true
+        setIframeLoading(false)
+        if (pendingCodeRef.current) {
+          iframeRef.current?.contentWindow?.postMessage(pendingCodeRef.current, "*")
+        }
+      }
+    }
+    window.addEventListener("message", onMsg)
+    return () => window.removeEventListener("message", onMsg)
+  }, [])
+
+  // 3-second force-injection — if BOP_READY hasn't arrived, push code anyway.
+  // Covers slow CDNs or sandboxes that load silently without firing the signal.
+  useEffect(() => {
+    if (!iframeLoading) return
+    const t = setTimeout(() => {
+      if (!sandboxReadyRef.current && pendingCodeRef.current) {
+        iframeRef.current?.contentWindow?.postMessage(pendingCodeRef.current, "*")
+      }
+      setIframeLoading(false)
+    }, 3000)
+    return () => clearTimeout(t)
+  }, [iframeLoading, iframeKey])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -786,17 +877,32 @@ export function WorkbenchPage() {
     setCanvasTab("preview")
   }
 
+  function handleResetCanvas() {
+    setCurrentCode("")
+    setCurrentSchema(null)
+    setActiveVersionId(null)
+    setCanvasTab("preview")
+    if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null }
+    setIframeKey((k) => k + 1)
+    setIframeLoading(false)
+  }
+
   function handleDeploySubmit() {
     setDeploy((d) => ({ ...d, step: "loading" }))
+    const userId = (localStorage.getItem("bopos_token") ?? "anon")
+      .replace(/[^a-zA-Z0-9]/g, "_")
+      .slice(0, 20)
     const existing = JSON.parse(localStorage.getItem(DEPLOYED_KEY) ?? "[]")
     existing.push({
       id:         crypto.randomUUID(),
       name:       deploy.name,
       dashboard:  deploy.dashboard,
       code:       currentCode,
+      userId,
       deployedAt: new Date().toISOString(),
     })
     localStorage.setItem(DEPLOYED_KEY, JSON.stringify(existing))
+    window.dispatchEvent(new CustomEvent('bop-deploy'))
     setTimeout(() => setDeploy((d) => ({ ...d, step: "success" })), 1500)
   }
 
@@ -975,6 +1081,16 @@ export function WorkbenchPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Reset Canvas — panic button, always visible */}
+            <button
+              onClick={handleResetCanvas}
+              title="Clear canvas and return to welcome screen"
+              className="flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-500 hover:bg-red-50 hover:border-red-300 transition-colors"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Reset Canvas
+            </button>
+
             {/* Refresh Preview — manual bridge trigger */}
             <button
               onClick={handleRefreshPreview}
@@ -1034,13 +1150,9 @@ export function WorkbenchPage() {
               </div>
             </div>
           ) : (
-            // ── Live Canvas ──────────────────────────────
-            // sanitizedCode has imports/exports stripped — safe for Babel inside react-live
-            <LiveProvider
-              code={prepareCode(sanitizedCode)}
-              scope={SANDBOX_SCOPE}
-              noInline={true}
-            >
+            // ── Iframe Sandbox Canvas ─────────────────────
+            // Crashes stay inside the iframe — the BOPOS OS never white-screens
+            <>
               {/* AI generating overlay */}
               {isLoading && (
                 <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-white/80 backdrop-blur-sm">
@@ -1050,20 +1162,21 @@ export function WorkbenchPage() {
               )}
 
               {canvasTab === "preview" ? (
-                <div className="h-full overflow-auto bg-gray-50 relative">
-                  <div className="min-h-full w-full">
-                    <PreviewBoundary resetKey={activeVersionId ?? "empty"}>
-                      <LivePreview />
-                    </PreviewBoundary>
-                  </div>
-                  {/* Friendly compile-error overlay — replaces raw red SyntaxError dump */}
-                  <CustomLiveError />
+                <div className="h-full relative bg-[#f8fafc]">
+                  <iframe
+                    key={iframeKey}
+                    ref={iframeRef}
+                    src={blobUrlRef.current ?? "about:blank"}
+                    className="h-full w-full border-none"
+                    sandbox="allow-scripts allow-same-origin"
+                    title="BOP Tool Preview"
+                  />
                 </div>
               ) : (
                 <div className="h-full overflow-auto bg-[#011428]">
                   <div className="px-4 pt-3 pb-1">
                     <span className="inline-block rounded-full bg-amber-500/20 border border-amber-500/30 px-2.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-400">
-                      Sanitized — what goes to Babel
+                      Sanitized — what goes into the iframe
                     </span>
                   </div>
                   <pre className="px-6 py-4 text-xs text-green-300/70 font-mono leading-relaxed whitespace-pre-wrap">
@@ -1081,7 +1194,7 @@ export function WorkbenchPage() {
                   )}
                 </div>
               )}
-            </LiveProvider>
+            </>
           )}
         </div>
 
@@ -1093,6 +1206,27 @@ export function WorkbenchPage() {
           onDeploy={handleDeploySubmit}
         />
       </div>
+
+      {/* Deploy success toast */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-[100] flex items-center gap-3 rounded-xl bg-emerald-600 px-5 py-3 text-white shadow-2xl">
+          <CheckCircle2 className="h-5 w-5 shrink-0" />
+          <span className="text-sm font-semibold">{toast.message}</span>
+          <button
+            onClick={() => {
+              const path = toast.dashboard === "os" ? "/home" : toast.dashboard === "mpr" ? "/mpr" : "/anchor"
+              navigate(path)
+              setToast(null)
+            }}
+            className="ml-1 shrink-0 rounded-md border border-white/30 px-2.5 py-1 text-xs font-semibold text-white hover:bg-white/20 transition-colors"
+          >
+            View →
+          </button>
+          <button onClick={() => setToast(null)} className="text-white/70 hover:text-white transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }

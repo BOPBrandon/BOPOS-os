@@ -14,10 +14,10 @@
  *                         show measurable forward movement at a glance
  * ============================================================
  */
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import {
   Lightbulb, Users, Cog, TrendingUp,
-  ShieldCheck, ShieldAlert, RefreshCw,
+  ShieldCheck, ShieldAlert, RefreshCw, Hammer,
 } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
@@ -34,6 +34,67 @@ import { MODULE_REGISTRY } from "@/types/bopos"
 import { useProfile } from "@/context/ProfileContext"
 import type { BankAccountAllocation } from "@/types/bopos"
 import type { ModuleCompletionResult } from "./ModuleViewer"
+
+// ─────────────────────────────────────────────
+// CUSTOM AI TOOLS — deployed to "os" dashboard
+// ─────────────────────────────────────────────
+const OS_DEPLOYED_KEY = "bopos_workbench_deployed"
+
+interface DeployedTool {
+  id:         string
+  name:       string
+  dashboard:  string
+  deployedAt: string
+}
+
+function CustomAIToolsSection() {
+  const [tools, setTools] = useState<DeployedTool[]>(() => {
+    try {
+      const saved = localStorage.getItem(OS_DEPLOYED_KEY)
+      const all: DeployedTool[] = saved ? JSON.parse(saved) : []
+      return all.filter((t) => t.dashboard === "os")
+    } catch { return [] }
+  })
+
+  useEffect(() => {
+    function refresh() {
+      try {
+        const saved = localStorage.getItem(OS_DEPLOYED_KEY)
+        const all: DeployedTool[] = saved ? JSON.parse(saved) : []
+        setTools(all.filter((t) => t.dashboard === "os"))
+      } catch { setTools([]) }
+    }
+    window.addEventListener('bop-deploy', refresh)
+    return () => window.removeEventListener('bop-deploy', refresh)
+  }, [])
+
+  if (tools.length === 0) return null
+
+  return (
+    <div className="mt-6">
+      <div className="mb-3 flex items-center gap-2">
+        <Hammer className="h-4 w-4 text-[#002855]" />
+        <h3 className="text-sm font-bold text-[#002855]">Custom AI Tools</h3>
+        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+          {tools.length} {tools.length === 1 ? "tool" : "tools"}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {tools.map((tool) => (
+          <div
+            key={tool.id}
+            className="rounded-xl border border-border/60 border-l-4 border-l-[#002855] bg-white p-4 shadow-sm"
+          >
+            <p className="text-sm font-semibold text-foreground">{tool.name}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Deployed {new Date(tool.deployedAt).toLocaleDateString([], { month: "short", day: "numeric" })}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 // ─────────────────────────────────────────────
 // TAB CONFIG
@@ -279,6 +340,7 @@ export function OSDashboard() {
 
           <TabsContent value="process" className="m-0 p-6">
             <ProcessSection profile={profile} onLaunch={handleLaunch} />
+            <CustomAIToolsSection />
           </TabsContent>
 
           <TabsContent value="profit" className="m-0 p-6">

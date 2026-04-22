@@ -28,7 +28,13 @@ import { useMPR } from "@/context/MPRContext"
 const YEAR          = new Date().getFullYear()
 const LABEL_W       = 200
 const SCHEDULES_KEY = "bopos_anchor_schedules"
+const LINKED_KEY    = "bopos_anchor_linked_processes"
 const AUTO_SAVE_MS  = 10 * 60 * 1000
+
+function loadLinked(): Record<string, string> {
+  try { const s = localStorage.getItem(LINKED_KEY); return s ? JSON.parse(s) : {} }
+  catch { return {} }
+}
 
 type ViewMode = "weekly" | "monthly" | "quarterly" | "annual"
 
@@ -272,10 +278,11 @@ export function AnchorEngine() {
     const n = new Date(); const dayOfYear = Math.floor((n.getTime() - new Date(YEAR, 0, 0).getTime()) / 86400000)
     return Math.min(Math.floor((dayOfYear - 1) / 7), 51)
   })
-  const [wizardOpen,   setWizardOpen]   = useState(false)
-  const [scheduleOpen, setScheduleOpen] = useState(false)
-  const [dialogOpen,   setDialogOpen]   = useState(false)
-  const [activeBlock,  setActiveBlock]  = useState<ActiveBlock | null>(null)
+  const [wizardOpen,       setWizardOpen]       = useState(false)
+  const [scheduleOpen,     setScheduleOpen]     = useState(false)
+  const [dialogOpen,       setDialogOpen]       = useState(false)
+  const [activeBlock,      setActiveBlock]      = useState<ActiveBlock | null>(null)
+  const [linkedProcesses,  setLinkedProcesses]  = useState<Record<string, string>>(loadLinked)
   const wrapRef = useRef<HTMLDivElement>(null)
 
   const { state: mprState } = useMPR()
@@ -537,6 +544,23 @@ export function AnchorEngine() {
   }
 
   function handleAdd(item: RhythmItem) { addItem(item) }
+
+  function linkProcess(itemId: string, processId: string) {
+    setLinkedProcesses((prev) => {
+      const next = { ...prev, [itemId]: processId }
+      localStorage.setItem(LINKED_KEY, JSON.stringify(next))
+      return next
+    })
+  }
+
+  function unlinkProcess(itemId: string) {
+    setLinkedProcesses((prev) => {
+      const next = { ...prev }
+      delete next[itemId]
+      localStorage.setItem(LINKED_KEY, JSON.stringify(next))
+      return next
+    })
+  }
 
   // ── Quarter navigation helpers ─────────────────────────────
   function prevQuarter() { setSelectedMonth((m) => ((Math.floor(m / 3) - 1 + 4) % 4) * 3) }
@@ -902,14 +926,43 @@ export function AnchorEngine() {
                     <span className="text-xs font-bold uppercase tracking-wide text-foreground">Linked MPR Processes</span>
                   </div>
                   {activeBlock.processes.length === 0
-                    ? <div className="rounded-lg border border-dashed border-border bg-muted/40 px-4 py-4 text-center"><p className="text-xs text-muted-foreground">No processes in this lane yet.</p><p className="mt-0.5 text-[11px] text-muted-foreground">Go to <strong>The MPR</strong> to upload processes.</p></div>
-                    : <ul className="space-y-2">{activeBlock.processes.map((p) => (
-                        <li key={p.id} className="flex items-center gap-3 rounded-lg border border-border/60 bg-slate-50 px-3 py-2.5">
-                          <div className="h-2 w-2 shrink-0 rounded-full bg-orange-400" />
-                          <span className="flex-1 truncate text-sm font-medium text-foreground">{p.title}</span>
-                          {(p.writtenDoc || p.videoUrl) && <Badge variant="outline" className="shrink-0 text-[10px]">{p.writtenDoc && p.videoUrl ? "Full Doc" : p.writtenDoc ? "Written" : "Video"}</Badge>}
-                        </li>
-                      ))}</ul>
+                    ? <div className="rounded-lg border border-dashed border-border bg-muted/40 px-4 py-4 text-center">
+                        <p className="text-xs text-muted-foreground">No processes in this lane yet.</p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">Go to <strong>The MPR</strong> to upload processes.</p>
+                      </div>
+                    : <>
+                        <div className="mb-3">
+                          <select
+                            value={linkedProcesses[activeBlock.item.id] ?? ""}
+                            onChange={(e) => {
+                              if (e.target.value) linkProcess(activeBlock.item.id, e.target.value)
+                              else unlinkProcess(activeBlock.item.id)
+                            }}
+                            className="w-full rounded-md border border-border bg-white px-2.5 py-1.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-orange-400/30"
+                          >
+                            <option value="">Show all processes</option>
+                            {activeBlock.processes.map((p) => (
+                              <option key={p.id} value={p.id}>{p.title}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <ul className="space-y-2">
+                          {(linkedProcesses[activeBlock.item.id]
+                            ? activeBlock.processes.filter((p) => p.id === linkedProcesses[activeBlock.item.id])
+                            : activeBlock.processes
+                          ).map((p) => (
+                            <li key={p.id} className="flex items-center gap-3 rounded-lg border border-border/60 bg-slate-50 px-3 py-2.5">
+                              <div className="h-2 w-2 shrink-0 rounded-full bg-orange-400" />
+                              <span className="flex-1 truncate text-sm font-medium text-foreground">{p.title}</span>
+                              {(p.writtenDoc || p.videoUrl) && (
+                                <Badge variant="outline" className="shrink-0 text-[10px]">
+                                  {p.writtenDoc && p.videoUrl ? "Full Doc" : p.writtenDoc ? "Written" : "Video"}
+                                </Badge>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
                   }
                 </div>
               )}
