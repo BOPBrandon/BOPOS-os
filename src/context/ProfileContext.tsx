@@ -3,7 +3,7 @@
  * Lifts ClientProfile state to the app level so every dashboard
  * and the CoachPanel share the same live data without prop drilling.
  */
-import { createContext, useContext, useState } from "react"
+import { createContext, useContext, useEffect, useState } from "react"
 import { createDemoProfile, createBlankProfile } from "@/services/databridge"
 import type { ClientProfile } from "@/types/bopos"
 
@@ -52,6 +52,13 @@ function loadInitialProfile(): ClientProfile {
 
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<ClientProfile>(loadInitialProfile)
+
+  // Persist every profile change — progress on every module survives reloads.
+  useEffect(() => {
+    try {
+      localStorage.setItem("bopos_profile", JSON.stringify(profile))
+    } catch { /* quota exceeded — ignore */ }
+  }, [profile])
 
   return (
     <ProfileContext.Provider value={{ profile, setProfile }}>

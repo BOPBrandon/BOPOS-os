@@ -1,94 +1,83 @@
 /**
  * ============================================================
  * OS Dashboard — Layer 1: The Operating System
- * The four P's in a single tabbed view.
- * ============================================================
- * Four Build Filter check:
- *  ✦ One-Click      — tab switch is a single click; every unbuilt tool
- *                     shows exactly one primary action: "Start Module"
- *  ✦ Scalable       — each section is an isolated component; adding a
- *                     new P or module never touches the others
- *  ✦ Use What We Have — DataBridge + existing types drive all data;
- *                     no new state shape introduced here
- *  ✦ Continual Progress — completion ring + per-tab badge counts
- *                         show measurable forward movement at a glance
+ * Four P's in a four-column vertical layout.
  * ============================================================
  */
 import { useState, useEffect } from "react"
 import {
   Lightbulb, Users, Cog, TrendingUp,
-  ShieldCheck, ShieldAlert, RefreshCw, Hammer,
+  ShieldCheck, ShieldAlert, RefreshCw, Hammer, ExternalLink,
 } from "lucide-react"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { PurposeSection }  from "./sections/PurposeSection"
-import { PeopleSection }   from "./sections/PeopleSection"
-import { ProcessSection }  from "./sections/ProcessSection"
-import { ProfitSection }   from "./sections/ProfitSection"
-import { ModuleViewer }    from "./ModuleViewer"
+import { ModuleViewer } from "./ModuleViewer"
 import { VisionStoryViewer } from "@/mothership/modules/module-01-vision-story/VisionStoryViewer"
+import { MissionStatementViewer } from "@/mothership/modules/module-02-mission-statement/MissionStatementViewer"
 import { createDemoProfile, validateFinancials } from "@/services/databridge"
 import { pullForward } from "@/services/databridge/pull-forward"
 import { MODULE_REGISTRY } from "@/types/bopos"
 import { useProfile } from "@/context/ProfileContext"
-import type { BankAccountAllocation } from "@/types/bopos"
+import { supabase, type CustomTool } from "@/lib/supabase"
+import type { ClientProfile, ModuleSlot } from "@/types/bopos"
 import type { ModuleCompletionResult } from "./ModuleViewer"
 
 // ─────────────────────────────────────────────
-// CUSTOM AI TOOLS — deployed to "os" dashboard
+// QUICK ACCESS
 // ─────────────────────────────────────────────
-const OS_DEPLOYED_KEY = "bopos_workbench_deployed"
+function QuickAccessSection() {
+  const [tools, setTools] = useState<CustomTool[]>([])
 
-interface DeployedTool {
-  id:         string
-  name:       string
-  dashboard:  string
-  deployedAt: string
-}
-
-function CustomAIToolsSection() {
-  const [tools, setTools] = useState<DeployedTool[]>(() => {
-    try {
-      const saved = localStorage.getItem(OS_DEPLOYED_KEY)
-      const all: DeployedTool[] = saved ? JSON.parse(saved) : []
-      return all.filter((t) => t.dashboard === "os")
-    } catch { return [] }
-  })
+  async function fetchTools() {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data } = await supabase
+      .from("bop_custom_tools")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(3)
+    setTools(data ?? [])
+  }
 
   useEffect(() => {
-    function refresh() {
-      try {
-        const saved = localStorage.getItem(OS_DEPLOYED_KEY)
-        const all: DeployedTool[] = saved ? JSON.parse(saved) : []
-        setTools(all.filter((t) => t.dashboard === "os"))
-      } catch { setTools([]) }
-    }
-    window.addEventListener('bop-deploy', refresh)
-    return () => window.removeEventListener('bop-deploy', refresh)
+    fetchTools()
+    window.addEventListener("bop-deploy", fetchTools)
+    return () => window.removeEventListener("bop-deploy", fetchTools)
   }, [])
 
   if (tools.length === 0) return null
+
+  const locationLabel: Record<string, string> = {
+    os: "OS", mpr: "MPR", anchor: "Anchor",
+  }
 
   return (
     <div className="mt-6">
       <div className="mb-3 flex items-center gap-2">
         <Hammer className="h-4 w-4 text-[#002855]" />
-        <h3 className="text-sm font-bold text-[#002855]">Custom AI Tools</h3>
+        <h3 className="text-sm font-bold text-[#002855]">Quick Access</h3>
         <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
-          {tools.length} {tools.length === 1 ? "tool" : "tools"}
+          {tools.length} tool{tools.length !== 1 && "s"}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {tools.map((tool) => (
           <div
             key={tool.id}
-            className="rounded-xl border border-border/60 border-l-4 border-l-[#002855] bg-white p-4 shadow-sm"
+            className="rounded-xl border border-border/60 border-l-4 border-l-[#002855] bg-white p-4 shadow-sm flex flex-col gap-2"
           >
-            <p className="text-sm font-semibold text-foreground">{tool.name}</p>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Deployed {new Date(tool.deployedAt).toLocaleDateString([], { month: "short", day: "numeric" })}
-            </p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-semibold text-foreground leading-snug">{tool.tool_name}</p>
+              <ExternalLink className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50 mt-0.5" />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-[#002855]/10 px-2 py-0.5 text-[10px] font-semibold text-[#002855]">
+                {locationLabel[tool.target_location] ?? tool.target_location}
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                {new Date(tool.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
+              </span>
+            </div>
           </div>
         ))}
       </div>
@@ -97,59 +86,8 @@ function CustomAIToolsSection() {
 }
 
 // ─────────────────────────────────────────────
-// TAB CONFIG
-// ─────────────────────────────────────────────
-
-const TABS = [
-  {
-    id:          "purpose" as const,
-    label:       "Purpose",
-    icon:        Lightbulb,
-    description: "Vision · Values · Avatar",
-    modules:     ["module-01-vision-story", "module-02-mission-statement", "module-03-core-values"],
-  },
-  {
-    id:          "people" as const,
-    label:       "People",
-    icon:        Users,
-    description: "Meetings · Schedule · Org · Roles",
-    modules:     [
-      "module-08-team-meetings",     "module-06-ideal-weekly-schedule",
-      "module-09-org-chart",         "module-10-role-clarity",
-      "module-11-hiring-roadmap",    "module-12-onboarding-system",
-    ],
-  },
-  {
-    id:          "process" as const,
-    label:       "Process",
-    icon:        Cog,
-    description: "Process Map · Quality · Rhythms",
-    modules:     [
-      "module-07-master-process-roadmap",
-      "module-13-core-process-map", "module-14-quality-control", "module-15-customer-journey",
-      "module-20-annual-planning",  "module-21-quarterly-rocks",
-    ],
-  },
-  {
-    id:          "profit" as const,
-    label:       "Profit",
-    icon:        TrendingUp,
-    description: "Revenue · Accounts · Budget · Forecasting",
-    modules:     [
-      "module-04-bank-accounts",         "module-22-annual-budget",
-      "module-27-level-two-dashboard",   "module-23-compensation-pro-forma",
-      "module-24-project-start-sheet",   "module-25-revenue-pro-forma",
-      "module-26-financial-barn",
-    ],
-  },
-] as const
-
-type TabId = (typeof TABS)[number]["id"]
-
-// ─────────────────────────────────────────────
 // COMPLETION RING
 // ─────────────────────────────────────────────
-
 function CompletionRing({ percent }: { percent: number }) {
   const r  = 20
   const cx = 24
@@ -183,10 +121,66 @@ function CompletionRing({ percent }: { percent: number }) {
 }
 
 // ─────────────────────────────────────────────
-// TAB BADGE — completed / total for that P
+// COLUMN HEADER
 // ─────────────────────────────────────────────
+function ColumnHeader({
+  icon: Icon,
+  label,
+  done,
+  total,
+}: {
+  icon: React.ElementType
+  label: string
+  done: number
+  total: number
+}) {
+  const allDone = done === total
+  return (
+    <div className="flex items-center justify-between pb-3 border-b border-border">
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4 text-[#002855]" />
+        <span className="font-bold text-sm text-foreground">{label}</span>
+      </div>
+      <span
+        className={
+          allDone
+            ? "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700"
+            : "rounded-full bg-muted px-2 py-0.5 text-[10px] font-bold text-muted-foreground"
+        }
+      >
+        {done}/{total}
+      </span>
+    </div>
+  )
+}
 
-function tabBadge(profile: ClientProfile, modules: readonly string[]) {
+// ─────────────────────────────────────────────
+// MODULE TILE — clickable name-only card
+// ─────────────────────────────────────────────
+function ModuleTile({
+  moduleSlot,
+  title,
+  onLaunch,
+}: {
+  moduleSlot: ModuleSlot
+  title: string
+  onLaunch?: (moduleId: number) => void
+}) {
+  const numericId = MODULE_REGISTRY[moduleSlot]?.slot ?? 0
+  return (
+    <button
+      onClick={() => onLaunch?.(numericId)}
+      className="w-full rounded-md border border-border bg-card px-3 py-3 text-center text-xs font-bold uppercase tracking-wider text-foreground transition-colors hover:bg-accent hover:border-primary/40 cursor-pointer"
+    >
+      {title}
+    </button>
+  )
+}
+
+// ─────────────────────────────────────────────
+// BADGE COUNTS helper
+// ─────────────────────────────────────────────
+function columnBadge(profile: ClientProfile, modules: readonly string[]) {
   const done = modules.filter(
     (m) => profile.modules[m as keyof typeof profile.modules]?.status === "completed"
   ).length
@@ -196,10 +190,8 @@ function tabBadge(profile: ClientProfile, modules: readonly string[]) {
 // ─────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────
-
 export function OSDashboard() {
-  const { profile, setProfile }           = useProfile()
-  const [activeTab, setActiveTab]         = useState<TabId>("purpose")
+  const { profile, setProfile }               = useProfile()
   const [selectedModuleId, setSelectedModuleId] = useState<number | null>(null)
 
   const report      = validateFinancials(profile)
@@ -209,10 +201,7 @@ export function OSDashboard() {
   ).length
   const completionPct = Math.round((completedMods / totalMods) * 100)
 
-  function handleBankAccountsUpdate(updated: BankAccountAllocation) {
-    setProfile((prev) => ({ ...prev, bankAccounts: updated }))
-  }
-
+  // ── Handlers ─────────────────────────────────────────────
   function handleLaunch(moduleId: number) {
     setSelectedModuleId(moduleId)
   }
@@ -224,7 +213,6 @@ export function OSDashboard() {
     setProfile((prev) => {
       const existing = prev.modules[moduleSlot]
 
-      // Build the updated module with data from the viewer
       const updatedModule = {
         id:          moduleSlot,
         slot:        moduleId,
@@ -242,13 +230,33 @@ export function OSDashboard() {
         modules: { ...prev.modules, [moduleSlot]: updatedModule },
       }
 
-      // Cascade to downstream fields (visionStory, bankAccounts, etc.)
       const { updatedProfile } = pullForward(moduleSlot, withModule)
       return updatedProfile
     })
 
     setSelectedModuleId(null)
   }
+
+  // ── Column badge counts ───────────────────────────────────
+  const purposeBadge = columnBadge(profile, [
+    "module-01-vision-story", "module-02-mission-statement", "module-03-core-values",
+  ])
+  const peopleBadge = columnBadge(profile, [
+    "module-08-team-meetings", "module-06-ideal-weekly-schedule",
+    "module-09-org-chart", "module-10-role-clarity",
+    "module-11-hiring-roadmap", "module-12-onboarding-system",
+  ])
+  const processBadge = columnBadge(profile, [
+    "module-07-master-process-roadmap", "module-14-quality-control",
+    "module-15-customer-journey", "module-20-annual-planning",
+    "module-13-core-process-map", "module-21-quarterly-rocks",
+  ])
+  const profitBadge = columnBadge(profile, [
+    "module-25-revenue-pro-forma", "module-04-bank-accounts",
+    "module-22-annual-budget", "module-23-compensation-pro-forma",
+    "module-26-financial-barn", "module-24-project-start-sheet",
+    "module-27-level-two-dashboard",
+  ])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -265,7 +273,6 @@ export function OSDashboard() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Math Redundancy status */}
           {report.isValid ? (
             <Badge variant="success" className="gap-1">
               <ShieldCheck className="h-3 w-3" />
@@ -289,78 +296,93 @@ export function OSDashboard() {
         </div>
       </header>
 
-      {/* ── Tabs ─────────────────────────────────────────────── */}
-      <Tabs
-        value={activeTab}
-        onValueChange={(v) => setActiveTab(v as TabId)}
-        className="flex flex-1 flex-col overflow-hidden"
-      >
-        <div className="border-b border-border px-6 pt-3 shrink-0">
-          <TabsList className="h-auto bg-transparent p-0 gap-1">
-            {TABS.map((tab) => {
-              const Icon  = tab.icon
-              const badge = tabBadge(profile, tab.modules)
-              const allDone = badge.done === badge.total
+      {/* ── Four-column layout ───────────────────────────────── */}
+      <div className="flex-1 overflow-auto">
+        <div className="grid grid-cols-4 divide-x divide-border min-h-full">
 
-              return (
-                <TabsTrigger
-                  key={tab.id}
-                  value={tab.id}
-                  className="group flex h-14 flex-col items-start gap-0.5 rounded-t-md border-b-2 border-transparent px-4 pb-2 pt-3 text-left data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-                >
-                  <div className="flex items-center gap-2">
-                    <Icon className="h-4 w-4 shrink-0" />
-                    <span className="font-semibold text-sm">{tab.label}</span>
-                    <span
-                      className={
-                        allDone
-                          ? "rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700"
-                          : "rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground"
-                      }
-                    >
-                      {badge.done}/{badge.total}
-                    </span>
-                  </div>
-                  <span className="text-[11px] text-muted-foreground">{tab.description}</span>
-                </TabsTrigger>
-              )
-            })}
-          </TabsList>
-        </div>
-
-        {/* ── Tab content ────────────────────────────────────── */}
-        <div className="flex-1 overflow-auto">
-          <TabsContent value="purpose" className="m-0 p-6">
-            <PurposeSection profile={profile} onLaunch={handleLaunch} />
-          </TabsContent>
-
-          <TabsContent value="people" className="m-0 p-6">
-            <PeopleSection profile={profile} onLaunch={handleLaunch} />
-          </TabsContent>
-
-          <TabsContent value="process" className="m-0 p-6">
-            <ProcessSection profile={profile} onLaunch={handleLaunch} />
-            <CustomAIToolsSection />
-          </TabsContent>
-
-          <TabsContent value="profit" className="m-0 p-6">
-            <ProfitSection
-              profile={profile}
-              onBankAccountsUpdate={handleBankAccountsUpdate}
-              onLaunch={handleLaunch}
+          {/* ── Purpose ── */}
+          <div className="flex flex-col gap-3 p-5">
+            <ColumnHeader
+              icon={Lightbulb}
+              label="Purpose"
+              done={purposeBadge.done}
+              total={purposeBadge.total}
             />
-          </TabsContent>
-        </div>
-      </Tabs>
 
-      {/* ── Module Viewer overlay ─────────────────────────── */}
+            <ModuleTile moduleSlot="module-01-vision-story"      title="Vision Story"       onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-02-mission-statement" title="Mission Statement"  onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-03-core-values"       title="Core Values"        onLaunch={handleLaunch} />
+          </div>
+
+          {/* ── People ── */}
+          <div className="flex flex-col gap-3 p-5">
+            <ColumnHeader
+              icon={Users}
+              label="People"
+              done={peopleBadge.done}
+              total={peopleBadge.total}
+            />
+
+            <ModuleTile moduleSlot="module-08-team-meetings"         title="Meetings"   onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-06-ideal-weekly-schedule" title="Schedule"   onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-09-org-chart"             title="Org Chart"  onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-10-role-clarity"          title="Job Roles"  onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-11-hiring-roadmap"        title="Hiring"     onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-12-onboarding-system"     title="Onboarding" onLaunch={handleLaunch} />
+          </div>
+
+          {/* ── Process ── */}
+          <div className="flex flex-col gap-3 p-5">
+            <ColumnHeader
+              icon={Cog}
+              label="Process"
+              done={processBadge.done}
+              total={processBadge.total}
+            />
+
+            <ModuleTile moduleSlot="module-07-master-process-roadmap" title="Process Map"       onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-14-quality-control"        title="Quality"           onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-15-customer-journey"       title="Rhythms"           onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-20-annual-planning"        title="12-Week Plan"      onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-13-core-process-map"       title="Delegation Roadmap" onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-21-quarterly-rocks"        title="Team Meetings"     onLaunch={handleLaunch} />
+          </div>
+
+          {/* ── Profit ── */}
+          <div className="flex flex-col gap-3 p-5">
+            <ColumnHeader
+              icon={TrendingUp}
+              label="Profit"
+              done={profitBadge.done}
+              total={profitBadge.total}
+            />
+
+            <ModuleTile moduleSlot="module-25-revenue-pro-forma"    title="Revenue"               onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-04-bank-accounts"        title="Accounts"              onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-22-annual-budget"        title="Budget"                onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-23-compensation-pro-forma" title="Compensation"        onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-26-financial-barn"       title="Financial Barn"        onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-24-project-start-sheet"  title="Project Start Sheet"   onLaunch={handleLaunch} />
+            <ModuleTile moduleSlot="module-27-level-two-dashboard"  title="Level Two Dashboard"   onLaunch={handleLaunch} />
+          </div>
+
+        </div>
+      </div>
+
+      {/* ── Module Viewer overlays ─────────────────────────── */}
       {selectedModuleId === 1 && (
         <VisionStoryViewer
           onComplete={handleModuleComplete}
           onClose={() => setSelectedModuleId(null)}
         />
       )}
-      {selectedModuleId !== null && selectedModuleId !== 1 && (
+      {selectedModuleId === 2 && (
+        <MissionStatementViewer
+          onComplete={handleModuleComplete}
+          onClose={() => setSelectedModuleId(null)}
+        />
+      )}
+      {selectedModuleId !== null && selectedModuleId !== 1 && selectedModuleId !== 2 && (
         <ModuleViewer
           moduleId={selectedModuleId}
           onComplete={handleModuleComplete}

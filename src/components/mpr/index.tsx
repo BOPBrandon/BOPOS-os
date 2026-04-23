@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils"
 import { useMPR, type MPRLane, type MPRProcess, type LaneColorKey } from "@/context/MPRContext"
 import { MPRSetupWizard } from "./MPRSetupWizard"
 import { ProcessModal } from "./ProcessModal"
+import { supabase, type CustomTool } from "@/lib/supabase"
 
 // ─────────────────────────────────────────────
 // KANBAN COLOR MAP
@@ -165,37 +166,28 @@ function KanbanColumn({
 }
 
 // ─────────────────────────────────────────────
-// CUSTOM AI TOOLS COLUMN
-// Reads from the Workbench deploy log and shows tools deployed to "mpr"
+// MY CUSTOM TOOLS COLUMN
+// Fetches tools deployed to "mpr" from bop_custom_tools via Supabase.
+// Re-fetches whenever the parent workbench dispatches "bop-deploy".
 // ─────────────────────────────────────────────
-const DEPLOYED_KEY = "bopos_workbench_deployed"
-
-interface DeployedTool {
-  id:          string
-  name:        string
-  dashboard:   string
-  deployedAt:  string
-}
-
 function CustomAIToolsColumn() {
-  const [tools, setTools] = useState<DeployedTool[]>(() => {
-    try {
-      const saved = localStorage.getItem(DEPLOYED_KEY)
-      const all: DeployedTool[] = saved ? JSON.parse(saved) : []
-      return all.filter((t) => t.dashboard === "mpr")
-    } catch { return [] }
-  })
+  const [tools, setTools] = useState<CustomTool[]>([])
+
+  async function fetchTools() {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data } = await supabase
+      .from("bop_custom_tools")
+      .select("*")
+      .eq("target_location", "mpr")
+      .order("created_at", { ascending: false })
+    setTools(data ?? [])
+  }
 
   useEffect(() => {
-    function refresh() {
-      try {
-        const saved = localStorage.getItem(DEPLOYED_KEY)
-        const all: DeployedTool[] = saved ? JSON.parse(saved) : []
-        setTools(all.filter((t) => t.dashboard === "mpr"))
-      } catch { setTools([]) }
-    }
-    window.addEventListener('bop-deploy', refresh)
-    return () => window.removeEventListener('bop-deploy', refresh)
+    fetchTools()
+    window.addEventListener("bop-deploy", fetchTools)
+    return () => window.removeEventListener("bop-deploy", fetchTools)
   }, [])
 
   if (tools.length === 0) return null
@@ -205,7 +197,7 @@ function CustomAIToolsColumn() {
       <div className="bg-[#002855] px-5 py-4">
         <div className="flex items-center gap-2">
           <Hammer className="h-4 w-4 text-white/70" />
-          <h2 className="text-base font-bold tracking-tight text-white leading-tight">Custom AI Tools</h2>
+          <h2 className="text-base font-bold tracking-tight text-white leading-tight">My Custom Tools</h2>
         </div>
         <div className="mt-1 flex items-center gap-2">
           <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 text-[11px] font-semibold">
@@ -219,9 +211,9 @@ function CustomAIToolsColumn() {
             key={tool.id}
             className="w-full rounded-lg bg-white border border-border/50 border-l-4 border-l-[#002855] shadow-sm px-3.5 py-3"
           >
-            <p className="text-sm font-medium text-foreground leading-snug">{tool.name}</p>
+            <p className="text-sm font-medium text-foreground leading-snug">{tool.tool_name}</p>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
-              Deployed {new Date(tool.deployedAt).toLocaleDateString([], { month: "short", day: "numeric" })}
+              Saved {new Date(tool.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
             </p>
           </div>
         ))}

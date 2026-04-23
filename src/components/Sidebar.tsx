@@ -3,8 +3,7 @@ import { LayoutDashboard, Map, Anchor, ChevronRight, LogOut, Hammer } from "luci
 import { cn } from "@/lib/utils"
 import { Separator } from "@/components/ui/separator"
 import { APP_NAME, APP_FULL_NAME, PRIMARY_DASHBOARDS } from "@/bopos-config"
-
-const TOKEN_KEY = "bopos_token"
+import { supabase } from "@/lib/supabase"
 
 const NAV_ICONS = {
   os:     LayoutDashboard,
@@ -12,9 +11,8 @@ const NAV_ICONS = {
   anchor: Anchor,
 } as const
 
-function handleSignOut() {
-  localStorage.removeItem(TOKEN_KEY)
-  // Full reload so App re-evaluates the token gate
+async function handleSignOut() {
+  await supabase.auth.signOut()
   window.location.href = "/"
 }
 
