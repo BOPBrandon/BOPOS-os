@@ -81,7 +81,7 @@ export function ProcessSection({ profile, onLaunch }: ProcessSectionProps) {
         <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
           Execution Rhythms
         </p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 items-stretch">
           <ModuleCard
             moduleSlot="module-20-annual-planning"
             title="Annual Planning"

@@ -39,7 +39,7 @@ export function PeopleSection({ profile, onLaunch }: PeopleSectionProps) {
         <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
           Rhythms &amp; Schedule
         </p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 items-stretch">
           <ModuleCard
             moduleSlot="module-08-team-meetings"
             title="Team Meetings"

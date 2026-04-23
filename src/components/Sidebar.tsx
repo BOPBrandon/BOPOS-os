@@ -20,15 +20,15 @@ export function Sidebar() {
   return (
     <aside className="flex h-screen w-64 flex-col bg-bop-dark-blue">
 
-      {/* Brand */}
-      <div className="flex flex-col gap-1 px-6 py-5">
+      {/* Brand — click to return to Command Center */}
+      <NavLink to="/home" className="flex flex-col gap-1 px-6 py-5 hover:opacity-80 transition-opacity cursor-pointer">
         <span className="text-xs font-semibold uppercase tracking-widest text-bop-white/50">
           {APP_NAME}
         </span>
         <span className="text-sm font-medium leading-tight text-bop-white">
           {APP_FULL_NAME}
         </span>
-      </div>
+      </NavLink>
 
       <Separator className="bg-bop-white/10" />
 
@@ -93,7 +93,7 @@ export function Sidebar() {
           {({ isActive }) => (
             <>
               <Hammer className="h-4 w-4 shrink-0" />
-              <span className="flex-1 leading-tight">The Workbench</span>
+              <span className="flex-1 leading-tight">Workbench</span>
               <ChevronRight
                 className={cn(
                   "h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-60",

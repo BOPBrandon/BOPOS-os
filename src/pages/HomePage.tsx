@@ -68,28 +68,12 @@ function PriorityCard({
         </div>
       )}
 
-      <div className={cn(
-        "mb-5 flex h-12 w-12 items-center justify-center rounded-xl",
-        recommended ? "bg-bop-dark-blue" : "bg-muted"
-      )}>
-        <Icon className={cn("h-5 w-5", recommended ? "text-white" : "text-muted-foreground")} />
-      </div>
-
-      <div className="flex-1">
+      <div className="flex-1 flex flex-col items-center text-center">
         <h2 className="text-lg font-bold tracking-tight text-foreground">{title}</h2>
-        {layerTag && (
-          <p className="mt-1 text-[11px] font-medium uppercase tracking-widest text-muted-foreground/50">
-            {layerTag}
-          </p>
-        )}
         <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{description}</p>
       </div>
 
-      <div className="mt-8 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <span className={statusDot(status)} />
-          <span className="text-xs text-muted-foreground">{statusLabel(status)}</span>
-        </div>
+      <div className="mt-8 flex justify-center">
         <Button
           onClick={onAction}
           variant={recommended ? "default" : "outline"}
@@ -136,7 +120,7 @@ export function HomePage() {
     {
       icon:        LayoutDashboard,
       title:       "OS",
-      description: "The Operating System — The tools to run your business.",
+      description: "Tools to run the business.",
       status:      osStatus,
       recommended: true,
       onAction:    () => navigate("/os"),
@@ -145,15 +129,15 @@ export function HomePage() {
       icon:        GitBranch,
       title:       "Master Process Roadmap",
       layerTag:    "Layer 2 · The MPR",
-      description: "The processes to deliver your product.",
+      description: "Processes to deliver the product.",
       status:      mprStatus,
       onAction:    () => navigate("/mpr"),
     },
     {
       icon:        Anchor,
-      title:       "The Anchor",
+      title:       "Anchor",
       layerTag:    "Layer 3 · 52-Week Rhythm",
-      description: "The rhythms that make your business inevitable.",
+      description: "Implementation with repetition, predictability, and meaning.",
       status:      anchorStatus,
       onAction:    () => navigate("/anchor"),
     },

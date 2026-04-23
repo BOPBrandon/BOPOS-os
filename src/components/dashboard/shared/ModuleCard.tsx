@@ -69,7 +69,7 @@ export function ModuleCard({
   return (
     <Card
       className={cn(
-        "flex flex-col transition-all duration-300",
+        "flex flex-col transition-all duration-300 h-full",
         status === "completed" && "border-emerald-200",
         // Pulsing amber ring while AI is actively staging data for this card
         isAITyping  && "ring-2 ring-bop-light-orange ring-offset-1 animate-pulse",

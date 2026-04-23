@@ -76,7 +76,7 @@ export const PRIMARY_DASHBOARDS = [
   {
     id: "os",
     label: "The Operating System",
-    shortLabel: "The OS",
+    shortLabel: "OS",
     description: "4 P's — People, Process, Product, Profit",
     path: "/os",
     layer: 1,
@@ -84,7 +84,7 @@ export const PRIMARY_DASHBOARDS = [
   {
     id: "mpr",
     label: "Master Process Roadmap",
-    shortLabel: "The MPR",
+    shortLabel: "MPR",
     description: "4 Core Systems driving execution",
     path: "/mpr",
     layer: 2,
@@ -92,7 +92,7 @@ export const PRIMARY_DASHBOARDS = [
   {
     id: "anchor",
     label: "The Anchor",
-    shortLabel: "The Anchor",
+    shortLabel: "Anchor",
     description: "52-Week Rhythm Engine",
     path: "/anchor",
     layer: 3,

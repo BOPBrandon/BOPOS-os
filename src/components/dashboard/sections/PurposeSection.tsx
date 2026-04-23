@@ -30,7 +30,7 @@ export function PurposeSection({ profile, onLaunch }: PurposeSectionProps) {
         />
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 items-stretch">
         {/* Module 01 — Vision Story */}
         <ModuleCard
           moduleSlot="module-01-vision-story"
